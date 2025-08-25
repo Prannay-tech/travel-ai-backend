@@ -1,0 +1,44 @@
+# Ignore all frontend files
+clean_frontend/
+frontend/
+src/
+public/
+node_modules/
+package.json
+package-lock.json
+postcss.config.js
+tailwind.config.js
+
+# Ignore all TypeScript/JavaScript files
+*.ts
+*.tsx
+*.js
+*.jsx
+*.mjs
+
+# Ignore Supabase functions
+supabase/
+
+# Ignore documentation and guides
+*.md
+.github/
+
+# Ignore other directories
+database/
+etl/
+monitoring/
+
+# Ignore config files
+windsurf.yaml
+start_clean_project.sh
+setup_database.py
+
+# Keep only Python backend files
+!main.py
+!requirements.txt
+!*.py
+!.env
+!railway.json
+!runtime.txt
+!Procfile
+!railway-backend/
