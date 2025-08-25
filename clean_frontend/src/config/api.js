@@ -185,3 +185,4 @@ export const getActivities = (destination) => {
 };
 
 export default apiService;
+      
