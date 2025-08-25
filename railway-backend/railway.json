@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "cd railway-backend && python main.py",
+    "startCommand": "python main.py",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100
   }
