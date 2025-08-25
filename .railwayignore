@@ -1,0 +1,27 @@
+# Ignore frontend files
+clean_frontend/
+frontend/
+
+# Ignore Supabase functions
+supabase/
+*.ts
+
+# Ignore documentation and guides
+*.md
+.github/
+
+# Ignore other directories
+database/
+etl/
+monitoring/
+
+# Ignore config files
+windsurf.yaml
+start_clean_project.sh
+setup_database.py
+
+# Keep only backend files
+!main.py
+!requirements.txt
+!*.py
+!.env
