@@ -1,0 +1,85 @@
+{
+  "monitors": [
+    {
+      "name": "Travel AI Backend Health",
+      "type": "http",
+      "url": "https://travel-ai-backend.onrender.com/health",
+      "interval": 300,
+      "timeout": 30,
+      "retries": 2,
+      "alert_contacts": ["default"],
+      "http_username": "",
+      "http_password": "",
+      "http_auth_type": "basic",
+      "keyword_type": "exists",
+      "keyword_value": "healthy",
+      "post_type": "json",
+      "post_value": "",
+      "post_content_type": "application/json",
+      "alert_when_down": true,
+      "alert_when_up": true,
+      "alert_after": 1
+    },
+    {
+      "name": "Travel AI API Root",
+      "type": "http",
+      "url": "https://travel-ai-backend.onrender.com/",
+      "interval": 300,
+      "timeout": 30,
+      "retries": 2,
+      "alert_contacts": ["default"],
+      "http_username": "",
+      "http_password": "",
+      "http_auth_type": "basic",
+      "keyword_type": "exists",
+      "keyword_value": "Travel AI API",
+      "post_type": "json",
+      "post_value": "",
+      "post_content_type": "application/json",
+      "alert_when_down": true,
+      "alert_when_up": true,
+      "alert_after": 1
+    },
+    {
+      "name": "Travel AI Frontend",
+      "type": "http",
+      "url": "https://your-username.github.io/travel-ai/",
+      "interval": 300,
+      "timeout": 30,
+      "retries": 2,
+      "alert_contacts": ["default"],
+      "http_username": "",
+      "http_password": "",
+      "http_auth_type": "basic",
+      "keyword_type": "exists",
+      "keyword_value": "Travel AI",
+      "post_type": "json",
+      "post_value": "",
+      "post_content_type": "application/json",
+      "alert_when_down": true,
+      "alert_when_up": true,
+      "alert_after": 1
+    }
+  ],
+  "alert_contacts": [
+    {
+      "name": "default",
+      "type": "email",
+      "value": "admin@travel-ai.com"
+    },
+    {
+      "name": "slack",
+      "type": "webhook",
+      "value": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+    }
+  ],
+  "maintenance_windows": [
+    {
+      "name": "Weekly Maintenance",
+      "type": "weekly",
+      "day": "sunday",
+      "start_time": "02:00",
+      "duration": 120
+    }
+  ]
+} 
