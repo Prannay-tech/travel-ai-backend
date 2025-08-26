@@ -563,33 +563,54 @@ async def update_conversation_state(state: ConversationState, user_message: str)
     """Update conversation state based on user input."""
     user_message_lower = user_message.lower()
     
-    # Extract location if mentioned
-    if "from" in user_message_lower or "traveling from" in user_message_lower:
-        # Simple location extraction (you can make this more sophisticated)
-        words = user_message.split()
-        for i, word in enumerate(words):
-            if word.lower() in ["from", "traveling", "leaving"] and i + 1 < len(words):
-                location = words[i + 1]
-                if location.lower() not in ["to", "and", "or", "the", "a", "an"]:
-                    state.collected_data["travel_from"] = location
+    # If this is the first message or we're still asking for location
+    if state.current_step == "welcome" or state.current_step == "location":
+        # Check if user provided a location
+        if any(word in user_message_lower for word in ["dallas", "new york", "los angeles", "chicago", "miami", "seattle", "denver", "atlanta", "boston", "phoenix", "las vegas", "san francisco", "austin", "houston", "philadelphia", "san diego", "detroit", "minneapolis", "portland", "orlando", "cleveland", "cincinnati", "kansas city", "indianapolis", "columbus", "charlotte", "nashville", "memphis", "baltimore", "milwaukee", "oklahoma city", "louisville", "albuquerque", "tucson", "fresno", "sacramento", "long beach", "mesa", "virginia beach", "colorado springs", "omaha", "raleigh", "oakland", "tulsa", "wichita", "arlington", "new orleans", "bakersfield", "tampa", "honolulu", "anaheim", "aurora", "santa ana", "corpus christi", "riverside", "lexington", "stockton", "henderson", "saint paul", "st. louis", "pittsburgh", "anchorage", "greensboro", "plano", "newark", "durham", "lincoln", "chula vista", "jersey city", "chandler", "madison", "laredo", "north las vegas", "lubbock", "buffalo", "fort wayne", "garland", "glendale", "hialeah", "reno", "baton rouge", "irvine", "chesapeake", "irving", "scottsdale", "fremont", "boise", "richmond", "winston-salem", "spokane", "montgomery", "des moines", "modesto", "fayetteville", "tacoma", "shreveport", "fontana", "oxnard", "moreno valley", "huntington beach", "grand rapids", "salt lake city", "huntsville", "worcester", "knoxville", "newport news", "grand prairie", "brownsville", "overland park", "santa clarita", "providence", "garden grove", "ontario", "vancouver", "sioux falls", "springfield", "pekin", "pembroke pines", "elk grove", "salem", "corona", "eugene", "mckinney", "fort lauderdale", "lancaster", "cary", "palmdale", "hayward", "salinas", "frisco", "pasadena", "macon", "alexandria", "pomona", "lakewood", "sunnyvale", "escondido", "hollywood", "clarksville", "torrance", "rockford", "joliet", "paterson", "bridgeport", "napa", "savannah", "jacksonville", "dayton", "syracuse", "naples", "fort myers", "port st. lucie", "charleston", "columbia", "charlotte", "orlando", "tampa", "miami", "fort lauderdale", "west palm beach", "pensacola", "tallahassee", "gainesville"]):
+            # Extract the location name
+            for word in user_message.split():
+                if word.lower() in ["dallas", "new york", "los angeles", "chicago", "miami", "seattle", "denver", "atlanta", "boston", "phoenix", "las vegas", "san francisco", "austin", "houston", "philadelphia", "san diego", "detroit", "minneapolis", "portland", "orlando", "cleveland", "cincinnati", "kansas city", "indianapolis", "columbus", "charlotte", "nashville", "memphis", "baltimore", "milwaukee", "oklahoma city", "louisville", "albuquerque", "tucson", "fresno", "sacramento", "long beach", "mesa", "virginia beach", "colorado springs", "omaha", "raleigh", "oakland", "tulsa", "wichita", "arlington", "new orleans", "bakersfield", "tampa", "honolulu", "anaheim", "aurora", "santa ana", "corpus christi", "riverside", "lexington", "stockton", "henderson", "saint paul", "st. louis", "pittsburgh", "anchorage", "greensboro", "plano", "newark", "durham", "lincoln", "chula vista", "jersey city", "chandler", "madison", "laredo", "north las vegas", "lubbock", "buffalo", "fort wayne", "garland", "glendale", "hialeah", "reno", "baton rouge", "irvine", "chesapeake", "irving", "scottsdale", "fremont", "boise", "richmond", "winston-salem", "spokane", "montgomery", "des moines", "modesto", "fayetteville", "tacoma", "shreveport", "fontana", "oxnard", "moreno valley", "huntington beach", "grand rapids", "salt lake city", "huntsville", "worcester", "knoxville", "newport news", "grand prairie", "brownsville", "overland park", "santa clarita", "providence", "garden grove", "ontario", "vancouver", "sioux falls", "springfield", "pekin", "pembroke pines", "elk grove", "salem", "corona", "eugene", "mckinney", "fort lauderdale", "lancaster", "cary", "palmdale", "hayward", "salinas", "frisco", "pasadena", "macon", "alexandria", "pomona", "lakewood", "sunnyvale", "escondido", "hollywood", "clarksville", "torrance", "rockford", "joliet", "paterson", "bridgeport", "napa", "savannah", "jacksonville", "dayton", "syracuse", "naples", "fort myers", "port st. lucie", "charleston", "columbia", "charlotte", "orlando", "tampa", "miami", "fort lauderdale", "west palm beach", "pensacola", "tallahassee", "gainesville"]:
+                    state.collected_data["travel_from"] = word
                     state.current_step = "destination_type"
                     break
+        else:
+            # If no location found, keep asking
+            state.current_step = "location"
     
-    # Extract destination type
-    destination_keywords = ["beach", "mountain", "city", "historic", "adventure", "relaxing", "cultural"]
-    for keyword in destination_keywords:
-        if keyword in user_message_lower:
-            state.collected_data["destination_type"] = keyword
+    # Check for destination type
+    elif state.current_step == "destination_type":
+        destination_keywords = ["beach", "mountain", "city", "historic", "adventure", "relaxing", "cultural", "tropical", "ski", "urban", "rural", "coastal"]
+        for keyword in destination_keywords:
+            if keyword in user_message_lower:
+                state.collected_data["destination_type"] = keyword
+                state.current_step = "budget"
+                break
+        else:
+            # If no destination type found, keep asking
+            state.current_step = "destination_type"
+    
+    # Check for budget information
+    elif state.current_step == "budget":
+        if any(word in user_message_lower for word in ["budget", "cost", "price", "$", "dollar", "thousand", "hundred"]):
+            # Extract budget amount (simplified)
+            import re
+            budget_match = re.search(r'\$?(\d+)', user_message)
+            if budget_match:
+                state.collected_data["budget"] = budget_match.group(1)
+                state.current_step = "dates"
+            else:
+                state.current_step = "budget"
+        else:
             state.current_step = "budget"
-            break
     
-    # Extract budget information
-    if any(word in user_message_lower for word in ["budget", "cost", "price", "$", "dollar"]):
-        state.current_step = "dates"
-    
-    # Extract travel dates
-    if any(word in user_message_lower for word in ["december", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november"]):
-        state.current_step = "recommendations"
+    # Check for travel dates
+    elif state.current_step == "dates":
+        months = ["december", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november"]
+        if any(month in user_message_lower for month in months):
+            state.collected_data["travel_dates"] = user_message
+            state.current_step = "recommendations"
+        else:
+            state.current_step = "dates"
 
 async def call_groq_recommendations(preferences: TravelPreferences) -> str:
     """Call Groq LLM to generate personalized travel recommendations."""
