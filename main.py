@@ -260,25 +260,25 @@ async def call_groq_recommendations(preferences: TravelPreferences) -> str:
     try:
         # Create a detailed prompt for the LLM
         prompt = f"""
-You are an expert travel advisor. Based on these preferences, suggest 5 destinations in valid JSON format only.
+You are a travel advisor. Suggest 3 destinations for: Budget {preferences.budget_per_person} {preferences.currency}, {preferences.people_count} people, {preferences.travel_type} {preferences.destination_type} trip, {preferences.travel_dates}.
 
-Preferences: Budget {preferences.budget_per_person} {preferences.currency}, {preferences.people_count} people, from {preferences.travel_from}, {preferences.travel_type} {preferences.destination_type} trip, {preferences.travel_dates}, {preferences.additional_preferences}
-
-Respond ONLY with this exact JSON format (no other text):
+Return ONLY valid JSON like this example:
 {{
     "destinations": [
         {{
-            "name": "Destination Name",
-            "country": "Country",
-            "type": "{preferences.destination_type}",
-            "description": "Why this destination is perfect",
-            "estimated_cost_per_person": "2000 USD",
-            "best_time_to_visit": "June-September",
-            "highlights": ["Beach", "Culture", "Food"],
-            "why_perfect": "Matches your preferences perfectly"
+            "name": "Maldives",
+            "country": "Maldives",
+            "type": "beach",
+            "description": "Perfect romantic beach destination",
+            "estimated_cost_per_person": "2500 USD",
+            "best_time_to_visit": "November-April",
+            "highlights": ["Beach", "Romance", "Luxury"],
+            "why_perfect": "Perfect for romantic beach getaway"
         }}
     ]
 }}
+
+No other text, just JSON.
 """
         
         # Call Groq API
@@ -504,7 +504,7 @@ async def get_recommendations(preferences: TravelPreferences):
             try:
                 # Try to parse the JSON response from LLM
                 import json
-                logger.info(f"LLM Response: {llm_response[:500]}...")  # Log first 500 chars
+                logger.info(f"LLM Response: {llm_response}")  # Log full response
                 recommendations = json.loads(llm_response)
                 
                 # Add additional data to each destination
