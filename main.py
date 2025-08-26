@@ -38,12 +38,12 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Real API Keys from environment variables
 SKYSCANNER_API_KEY = os.getenv("SKYSCANNER_API_KEY", "")
-AMADEUS_CLIENT_ID = os.getenv("AMADEUS_CLIENT_ID", "8W8ZGIcN61pNWmljxuc350cSGFUGXTCv")
-AMADEUS_CLIENT_SECRET = os.getenv("AMADEUS_CLIENT_SECRET", "4d7fY8brcLFkHMcG")
+AMADEUS_CLIENT_ID = os.getenv("AMADEUS_CLIENT_ID", "")
+AMADEUS_CLIENT_SECRET = os.getenv("AMADEUS_CLIENT_SECRET", "")
 HOTELS_API_KEY = os.getenv("HOTELS_API_KEY", "")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "0199245a95814f5a968202129251607")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
-CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY", "sk-vasW68a7a30dd9e7f619")
+CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY", "")
 
 # Import flight search API
 from flight_apis import flight_api
