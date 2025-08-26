@@ -255,6 +255,69 @@ async def call_groq_ai(message: str, conversation_history: List[Dict[str, str]] 
         logger.error(f"Error calling Groq AI: {e}")
         return "I'm experiencing technical difficulties. Please try again later."
 
+async def call_groq_recommendations(preferences: TravelPreferences) -> str:
+    """Call Groq LLM to generate personalized travel recommendations."""
+    try:
+        # Create a detailed prompt for the LLM
+        prompt = f"""
+You are an expert travel advisor. Based on these preferences, suggest 5 destinations in valid JSON format only.
+
+Preferences: Budget {preferences.budget_per_person} {preferences.currency}, {preferences.people_count} people, from {preferences.travel_from}, {preferences.travel_type} {preferences.destination_type} trip, {preferences.travel_dates}, {preferences.additional_preferences}
+
+Respond ONLY with this exact JSON format (no other text):
+{{
+    "destinations": [
+        {{
+            "name": "Destination Name",
+            "country": "Country",
+            "type": "{preferences.destination_type}",
+            "description": "Why this destination is perfect",
+            "estimated_cost_per_person": "2000 USD",
+            "best_time_to_visit": "June-September",
+            "highlights": ["Beach", "Culture", "Food"],
+            "why_perfect": "Matches your preferences perfectly"
+        }}
+    ]
+}}
+"""
+        
+        # Call Groq API
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                GROQ_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama3-8b-8192",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert travel advisor. Always respond with valid JSON format as requested."
+                        },
+                        {
+                            "role": "user", 
+                            "content": prompt
+                        }
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 2000
+                },
+                timeout=30.0
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                logger.error(f"Groq API error: {response.status_code} - {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error calling Groq for recommendations: {e}")
+        return None
+
 async def get_real_flights(search: FlightSearch) -> List[Dict]:
     """Get real flight data using integrated flight search APIs."""
     try:
@@ -432,7 +495,56 @@ async def chat_endpoint(request: ChatMessage):
 
 @app.post("/recommendations")
 async def get_recommendations(preferences: TravelPreferences):
-    """Get AI-powered travel recommendations based on preferences."""
+    """Get AI-powered travel recommendations using Groq LLM."""
+    try:
+        # Call Groq LLM for recommendations
+        llm_response = await call_groq_recommendations(preferences)
+        
+        if llm_response:
+            try:
+                # Try to parse the JSON response from LLM
+                import json
+                logger.info(f"LLM Response: {llm_response[:500]}...")  # Log first 500 chars
+                recommendations = json.loads(llm_response)
+                
+                # Add additional data to each destination
+                for dest in recommendations.get("destinations", []):
+                    # Add weather data
+                    dest["weather"] = await get_weather_data(dest["name"])
+                    
+                    # Add estimated flight cost (mock data for now)
+                    dest["estimated_flight_cost"] = f"500-800 {preferences.currency}"
+                    
+                    # Add booking links (mock data for now)
+                    dest["booking_links"] = {
+                        "flights": f"https://www.skyscanner.com/search?from={preferences.travel_from}&to={dest['name']}",
+                        "hotels": f"https://www.booking.com/search?ss={dest['name']}",
+                        "activities": f"https://www.getyourguide.com/search?q={dest['name']}"
+                    }
+                
+                return {
+                    "success": True,
+                    "destinations": recommendations.get("destinations", []),
+                    "preferences": preferences.dict(),
+                    "total_found": len(recommendations.get("destinations", [])),
+                    "source": "AI Generated"
+                }
+                
+            except json.JSONDecodeError:
+                # If LLM doesn't return valid JSON, fall back to filtered data
+                logger.warning("LLM response not valid JSON, using fallback")
+                return await get_filtered_recommendations(preferences)
+        else:
+            # Fall back to filtered data if LLM fails
+            logger.warning("LLM call failed, using fallback")
+            return await get_filtered_recommendations(preferences)
+
+    except Exception as e:
+        logger.error(f"Recommendations error: {e}")
+        raise HTTPException(status_code=500, detail="Recommendations service error")
+
+async def get_filtered_recommendations(preferences: TravelPreferences):
+    """Fallback method using filtered data (original logic)."""
     try:
         # Filter destinations based on preferences
         filtered_destinations = []
@@ -498,12 +610,13 @@ async def get_recommendations(preferences: TravelPreferences):
             "success": True,
             "destinations": final_destinations[:5],
             "preferences": preferences.dict(),
-            "total_found": len(final_destinations)
+            "total_found": len(final_destinations),
+            "source": "Filtered Data"
         }
 
     except Exception as e:
-        logger.error(f"Recommendations error: {e}")
-        raise HTTPException(status_code=500, detail="Recommendations service error")
+        logger.error(f"Filtered recommendations error: {e}")
+        raise HTTPException(status_code=500, detail="Filtered recommendations service error")
 
 @app.post("/flights")
 async def search_flights(search: FlightSearch):
