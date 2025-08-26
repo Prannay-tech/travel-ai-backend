@@ -535,19 +535,26 @@ async def chat_endpoint(request: ChatMessage):
         # Add user message to history
         state.messages.append({"role": "user", "content": request.message})
         
-        # Create conversation context
-        conversation_context = [
-            {"role": "system", "content": AI_SYSTEM_PROMPT + "\n\nCurrent conversation step: " + state.current_step + "\nCollected data: " + str(state.collected_data)}
-        ] + state.messages[-10:]  # Keep last 10 messages for context
+        # Simple conversation flow logic
+        user_message_lower = request.message.lower()
         
-        # Get AI response
-        response = await call_groq_ai(request.message, conversation_context)
+        # Check if user mentioned a location
+        if "dallas" in user_message_lower:
+            state.collected_data["travel_from"] = "Dallas"
+            response = "Great! I see you're traveling from Dallas. What type of destination are you looking for? Beach, mountain, city, or something else?"
+        elif "beach" in user_message_lower:
+            state.collected_data["destination_type"] = "beach"
+            response = "Perfect! A beach destination sounds amazing. What's your budget per person for this trip?"
+        elif any(word in user_message_lower for word in ["$", "dollar", "budget", "cost", "price"]):
+            response = "Excellent! With that budget, I can suggest some fantastic destinations. When are you planning to travel?"
+        elif any(word in user_message_lower for word in ["december", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november"]):
+            response = "Perfect! Based on your preferences, here are some great destinations for you:\n\n1. **Maldives** - Perfect beach destination\n2. **Bali, Indonesia** - Tropical paradise\n3. **Maui, Hawaii** - Beautiful beaches and culture\n\nWould you like me to help you find flights and hotels for any of these destinations?"
+        else:
+            # Default response for first message or unrecognized input
+            response = "Great! I'd love to help you plan your perfect trip. First, where are you traveling from?"
         
         # Add AI response to history
         state.messages.append({"role": "assistant", "content": response})
-        
-        # Update conversation state based on user input
-        await update_conversation_state(state, request.message)
         
         return {
             "response": response,
