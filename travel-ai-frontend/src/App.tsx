@@ -6,18 +6,52 @@ function App() {
     { id: 1, text: "Hi! I'm your AI travel planner. Where would you like to go?", isAI: true }
   ]);
   const [inputMessage, setInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSendMessage = () => {
-    if (inputMessage.trim()) {
-      const newMessage = { id: Date.now(), text: inputMessage, isAI: false };
-      setMessages([...messages, newMessage]);
+  // Replace with your actual Railway backend URL
+  const BACKEND_URL = 'https://web-production-b058.up.railway.app';
+
+  const handleSendMessage = async () => {
+    if (inputMessage.trim() && !isLoading) {
+      const userMessage = { id: Date.now(), text: inputMessage, isAI: false };
+      setMessages(prev => [...prev, userMessage]);
       setInputMessage('');
-      
-      // Simulate AI response
-      setTimeout(() => {
-        const aiResponse = { id: Date.now() + 1, text: "I'm working on finding the perfect destinations for you! This feature will be connected to our AI backend soon.", isAI: true };
-        setMessages(prev => [...prev, aiResponse]);
-      }, 1000);
+      setIsLoading(true);
+
+      try {
+        const response = await fetch(`${BACKEND_URL}/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: inputMessage,
+            session_id: 'default-session'
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const aiResponse = { 
+            id: Date.now() + 1, 
+            text: data.response || "I'm here to help you plan your perfect trip!", 
+            isAI: true 
+          };
+          setMessages(prev => [...prev, aiResponse]);
+        } else {
+          throw new Error('Failed to get response');
+        }
+      } catch (error) {
+        console.error('Error calling backend:', error);
+        const errorResponse = { 
+          id: Date.now() + 1, 
+          text: "I'm having trouble connecting to my travel database right now. Please try again in a moment!", 
+          isAI: true 
+        };
+        setMessages(prev => [...prev, errorResponse]);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -163,6 +197,17 @@ function App() {
                   </div>
                 </div>
               ))}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 text-gray-800 px-4 py-2 rounded-lg">
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Chat Input */}
@@ -174,11 +219,13 @@ function App() {
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                   placeholder="Type your message..."
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  disabled={isLoading}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
                 />
                 <button
                   onClick={handleSendMessage}
-                  className="bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600 transition-colors"
+                  disabled={isLoading || !inputMessage.trim()}
+                  className="bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Send
                 </button>
