@@ -113,13 +113,85 @@ TRAVEL_DATA = {
         "beach": [
             {
                 "id": 1,
+                "name": "Miami Beach, Florida",
+                "type": "beach",
+                "country": "USA",
+                "description": "Sunny beaches with vibrant nightlife and culture",
+                "image": "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
+                "rating": 4.6,
+                "cost_per_person": {"USD": 800, "EUR": 680, "GBP": 584},
+                "highlights": ["Beaches", "Nightlife", "Culture", "Shopping"],
+                "best_time": "March-May, September-November",
+                "flight_time": "2-4 hours",
+                "currency": "USD",
+                "daily_cost_usd": 80,
+                "flight_cost_usd": 200
+            },
+            {
+                "id": 2,
+                "name": "Hawaii, USA",
+                "type": "beach",
+                "country": "USA",
+                "description": "Paradise islands with stunning beaches and volcanoes",
+                "image": "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
+                "rating": 4.8,
+                "cost_per_person": {"USD": 1500, "EUR": 1275, "GBP": 1095},
+                "highlights": ["Beaches", "Volcanoes", "Culture", "Adventure"],
+                "best_time": "April-October",
+                "flight_time": "8-12 hours",
+                "currency": "USD",
+                "daily_cost_usd": 120,
+                "flight_cost_usd": 400
+            }
+        ],
+        "mountain": [
+            {
+                "id": 3,
+                "name": "Rocky Mountains, Colorado",
+                "type": "mountain",
+                "country": "USA",
+                "description": "Majestic mountains perfect for skiing and hiking",
+                "image": "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
+                "rating": 4.7,
+                "cost_per_person": {"USD": 1000, "EUR": 850, "GBP": 730},
+                "highlights": ["Skiing", "Hiking", "Scenic Views", "Adventure"],
+                "best_time": "December-March (skiing), June-September (hiking)",
+                "flight_time": "3-6 hours",
+                "currency": "USD",
+                "daily_cost_usd": 100,
+                "flight_cost_usd": 300
+            }
+        ],
+        "city": [
+            {
+                "id": 4,
+                "name": "New York City",
+                "type": "city",
+                "country": "USA",
+                "description": "The city that never sleeps with endless entertainment",
+                "image": "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=800",
+                "rating": 4.5,
+                "cost_per_person": {"USD": 1200, "EUR": 1020, "GBP": 876},
+                "highlights": ["Culture", "Food", "Shopping", "Entertainment"],
+                "best_time": "April-June, September-November",
+                "flight_time": "0-2 hours",
+                "currency": "USD",
+                "daily_cost_usd": 150,
+                "flight_cost_usd": 100
+            }
+        ]
+    },
+    "international": {
+        "beach": [
+            {
+                "id": 5,
                 "name": "Bali, Indonesia",
                 "type": "beach",
                 "country": "Indonesia",
                 "description": "Tropical paradise with beautiful beaches, temples, and culture",
                 "image": "https://images.unsplash.com/photo-1537953773345-d172ccf13cf1?w=800",
                 "rating": 4.8,
-                "cost_per_person": {"USD": 1200, "EUR": 1100, "GBP": 950},
+                "cost_per_person": {"USD": 1200, "EUR": 1020, "GBP": 876},
                 "highlights": ["Beaches", "Temples", "Culture", "Adventure"],
                 "best_time": "April-October",
                 "flight_time": "18-24 hours",
@@ -128,75 +200,87 @@ TRAVEL_DATA = {
                 "flight_cost_usd": 500
             },
             {
-                "id": 2,
+                "id": 6,
                 "name": "Maldives",
                 "type": "beach",
                 "country": "Maldives",
                 "description": "Luxury overwater bungalows and crystal clear waters",
                 "image": "https://images.unsplash.com/photo-1514282401047-d79a71a590e8?w=800",
                 "rating": 4.9,
-                "cost_per_person": {"USD": 3500, "EUR": 3200, "GBP": 2800},
+                "cost_per_person": {"USD": 3500, "EUR": 2975, "GBP": 2555},
                 "highlights": ["Luxury", "Beaches", "Snorkeling", "Relaxation"],
                 "best_time": "November-April",
                 "flight_time": "20-30 hours",
                 "currency": "MVR",
                 "daily_cost_usd": 150,
                 "flight_cost_usd": 600
-            }
-        ],
-        "mountain": [
+            },
             {
-                "id": 3,
-                "name": "Swiss Alps",
-                "type": "mountain",
-                "country": "Switzerland",
-                "description": "Majestic mountains perfect for skiing and hiking",
-                "image": "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
-                "rating": 4.9,
-                "cost_per_person": {"USD": 2500, "EUR": 2300, "GBP": 2000},
-                "highlights": ["Skiing", "Hiking", "Scenic Views", "Adventure"],
-                "best_time": "December-March (skiing), June-September (hiking)",
-                "flight_time": "8-12 hours",
-                "currency": "CHF",
-                "daily_cost_usd": 120,
-                "flight_cost_usd": 400
-            }
-        ],
-        "city": [
-            {
-                "id": 4,
-                "name": "Tokyo, Japan",
-                "type": "city",
-                "country": "Japan",
-                "description": "Modern metropolis with rich culture and technology",
-                "image": "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=800",
+                "id": 7,
+                "name": "Santorini, Greece",
+                "type": "beach",
+                "country": "Greece",
+                "description": "Stunning white buildings and blue waters",
+                "image": "https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?w=800",
                 "rating": 4.7,
-                "cost_per_person": {"USD": 2000, "EUR": 1800, "GBP": 1600},
-                "highlights": ["Technology", "Culture", "Food", "Shopping"],
-                "best_time": "March-May (Cherry Blossom), September-November",
+                "cost_per_person": {"USD": 1800, "EUR": 1530, "GBP": 1314},
+                "highlights": ["Beaches", "Architecture", "Sunsets", "Romance"],
+                "best_time": "June-September",
                 "flight_time": "12-16 hours",
-                "currency": "JPY",
-                "daily_cost_usd": 100,
+                "currency": "EUR",
+                "daily_cost_usd": 120,
                 "flight_cost_usd": 500
             }
-        ]
-    },
-    "international": {
-        "beach": [
+        ],
+        "historic": [
             {
-                "id": 5,
+                "id": 8,
                 "name": "Rome, Italy",
                 "type": "historic",
                 "country": "Italy",
                 "description": "Ancient city with incredible history and architecture",
                 "image": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?w=800",
                 "rating": 4.6,
-                "cost_per_person": {"USD": 1800, "EUR": 1600, "GBP": 1400},
+                "cost_per_person": {"USD": 1800, "EUR": 1530, "GBP": 1314},
                 "highlights": ["History", "Architecture", "Food", "Culture"],
                 "best_time": "April-June, September-October",
                 "flight_time": "8-12 hours",
                 "currency": "EUR",
                 "daily_cost_usd": 150,
+                "flight_cost_usd": 500
+            },
+            {
+                "id": 9,
+                "name": "Paris, France",
+                "type": "historic",
+                "country": "France",
+                "description": "City of love with iconic landmarks and culture",
+                "image": "https://images.unsplash.com/photo-1502602898536-47ad22581b52?w=800",
+                "rating": 4.5,
+                "cost_per_person": {"USD": 2000, "EUR": 1700, "GBP": 1460},
+                "highlights": ["History", "Architecture", "Food", "Culture"],
+                "best_time": "April-June, September-October",
+                "flight_time": "7-10 hours",
+                "currency": "EUR",
+                "daily_cost_usd": 180,
+                "flight_cost_usd": 600
+            }
+        ],
+        "city": [
+            {
+                "id": 10,
+                "name": "Tokyo, Japan",
+                "type": "city",
+                "country": "Japan",
+                "description": "Modern metropolis with rich culture and technology",
+                "image": "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=800",
+                "rating": 4.7,
+                "cost_per_person": {"USD": 2000, "EUR": 1700, "GBP": 1460},
+                "highlights": ["Technology", "Culture", "Food", "Shopping"],
+                "best_time": "March-May (Cherry Blossom), September-November",
+                "flight_time": "12-16 hours",
+                "currency": "JPY",
+                "daily_cost_usd": 100,
                 "flight_cost_usd": 500
             }
         ]
@@ -430,9 +514,121 @@ async def chat_endpoint(request: ChatMessage):
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail="Chat service error")
 
+async def call_groq_recommendations(preferences: TravelPreferences) -> str:
+    """Call Groq LLM to generate personalized travel recommendations."""
+    try:
+        # Create a detailed prompt for the LLM
+        prompt = f"""
+You are an expert travel advisor. Based on these preferences, suggest 5 destinations in valid JSON format only.
+
+Preferences: Budget {preferences.budget_per_person} {preferences.currency}, {preferences.people_count} people, from {preferences.travel_from}, {preferences.travel_type} {preferences.destination_type} trip, {preferences.travel_dates}, {preferences.additional_preferences}
+
+Respond ONLY with this exact JSON format (no other text):
+{{
+    "destinations": [
+        {{
+            "name": "Destination Name",
+            "country": "Country",
+            "type": "{preferences.destination_type}",
+            "description": "Why this destination is perfect",
+            "estimated_cost_per_person": "2000 USD",
+            "best_time_to_visit": "June-September",
+            "highlights": ["Beach", "Culture", "Food"],
+            "why_perfect": "Matches your preferences perfectly"
+        }}
+    ]
+}}
+"""
+        
+        # Call Groq API
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                GROQ_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama3-8b-8192",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert travel advisor. Always respond with valid JSON format as requested."
+                        },
+                        {
+                            "role": "user", 
+                            "content": prompt
+                        }
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 2000
+                },
+                timeout=30.0
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                logger.error(f"Groq API error: {response.status_code} - {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error calling Groq for recommendations: {e}")
+        return None
+
 @app.post("/recommendations")
 async def get_recommendations(preferences: TravelPreferences):
-    """Get AI-powered travel recommendations based on preferences."""
+    """Get AI-powered travel recommendations using Groq LLM."""
+    try:
+        # Call Groq LLM for recommendations
+        llm_response = await call_groq_recommendations(preferences)
+        
+        if llm_response:
+            try:
+                # Try to parse the JSON response from LLM
+                import json
+                logger.info(f"LLM Response: {llm_response[:500]}...")  # Log first 500 chars
+                recommendations = json.loads(llm_response)
+                
+                # Add additional data to each destination
+                for dest in recommendations.get("destinations", []):
+                    # Add weather data
+                    dest["weather"] = await get_weather_data(dest["name"])
+                    
+                    # Add estimated flight cost (mock data for now)
+                    dest["estimated_flight_cost"] = f"500-800 {preferences.currency}"
+                    
+                    # Add booking links (mock data for now)
+                    dest["booking_links"] = {
+                        "flights": f"https://www.skyscanner.com/search?from={preferences.travel_from}&to={dest['name']}",
+                        "hotels": f"https://www.booking.com/search?ss={dest['name']}",
+                        "activities": f"https://www.getyourguide.com/search?q={dest['name']}"
+                    }
+                
+                return {
+                    "success": True,
+                    "destinations": recommendations.get("destinations", []),
+                    "preferences": preferences.dict(),
+                    "total_found": len(recommendations.get("destinations", [])),
+                    "source": "AI Generated"
+                }
+                
+            except json.JSONDecodeError:
+                # If LLM doesn't return valid JSON, fall back to filtered data
+                logger.warning("LLM response not valid JSON, using fallback")
+                return await get_filtered_recommendations(preferences)
+        else:
+            # Fall back to filtered data if LLM fails
+            logger.warning("LLM call failed, using fallback")
+            return await get_filtered_recommendations(preferences)
+
+    except Exception as e:
+        logger.error(f"Recommendations error: {e}")
+        raise HTTPException(status_code=500, detail="Recommendations service error")
+
+async def get_filtered_recommendations(preferences: TravelPreferences):
+    """Fallback method using filtered data (original logic)."""
     try:
         # Filter destinations based on preferences
         filtered_destinations = []
@@ -448,10 +644,32 @@ async def get_recommendations(preferences: TravelPreferences):
             if preferences.destination_type.lower() in dest_type.lower():
                 filtered_destinations.extend(destinations)
         
-        # If no exact match, get a mix of destinations
+        # If no exact match, try partial matches or similar types
         if not filtered_destinations:
+            # Try to find similar destination types
+            similar_types = {
+                "beach": ["beach"],
+                "mountain": ["mountain"],
+                "city": ["city"],
+                "historic": ["historic"],
+                "religious": ["historic", "city"],  # Religious sites often in historic cities
+                "adventure": ["mountain", "beach"],  # Adventure can be in mountains or beaches
+                "relaxing": ["beach", "mountain"]    # Relaxing can be beach or mountain
+            }
+            
+            requested_type = preferences.destination_type.lower()
+            if requested_type in similar_types:
+                for similar_type in similar_types[requested_type]:
+                    if similar_type in destination_pool:
+                        filtered_destinations.extend(destination_pool[similar_type])
+        
+        # If still no matches, return a small selection of popular destinations
+        if not filtered_destinations:
+            # Return top 3 destinations from the pool
+            all_destinations = []
             for destinations in destination_pool.values():
-                filtered_destinations.extend(destinations)
+                all_destinations.extend(destinations)
+            filtered_destinations = all_destinations[:3]
         
         # Filter by budget
         budget_clean = preferences.budget_per_person.replace("$", "").replace(",", "")
@@ -498,12 +716,13 @@ async def get_recommendations(preferences: TravelPreferences):
             "success": True,
             "destinations": final_destinations[:5],
             "preferences": preferences.dict(),
-            "total_found": len(final_destinations)
+            "total_found": len(final_destinations),
+            "source": "Filtered Data"
         }
 
     except Exception as e:
-        logger.error(f"Recommendations error: {e}")
-        raise HTTPException(status_code=500, detail="Recommendations service error")
+        logger.error(f"Filtered recommendations error: {e}")
+        raise HTTPException(status_code=500, detail="Filtered recommendations service error")
 
 @app.post("/flights")
 async def search_flights(search: FlightSearch):

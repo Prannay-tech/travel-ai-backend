@@ -1,140 +1,120 @@
-# Travel AI - AI-Powered Travel Planning Platform
+# Travel AI Backend API
 
-A modern, AI-powered travel planning platform that helps users discover destinations, book flights, hotels, and plan activities using natural language conversations.
+A FastAPI-powered backend for the Travel AI application, providing AI-powered travel planning with booking integration.
 
-## 🌟 Features
+## 🚀 Features
 
-- **🤖 AI Chat Interface**: Natural language conversation with Groq LLM
-- **🗺️ Smart Recommendations**: AI-powered destination suggestions
-- **✈️ Flight Booking**: Integrated flight search and booking
-- **🏨 Hotel Booking**: Hotel recommendations and booking links
-- **🎯 Activity Planning**: Popular activities and itinerary planning
-- **💱 Multi-Currency Support**: Support for USD, EUR, GBP, CAD, AUD
-- **🌍 Domestic & International**: Support for both domestic and international travel
-- **🎨 Modern Dark UI**: Beautiful dark theme with glass morphism effects
-
-## 🏗️ Architecture
-
-- **Frontend**: React.js with Tailwind CSS (Dark Theme)
-- **Backend**: FastAPI (Python)
-- **AI**: Groq LLM API
-- **Styling**: Modern glass morphism with gradient effects
-
-## 📁 Project Structure
-
-```
-travel-ai/
-├── clean_frontend/          # React frontend with dark theme
-├── clean_backend/           # FastAPI backend
-├── start_clean_project.sh   # Startup script
-├── README_CLEAN.md         # Detailed setup guide
-├── PROJECT_COMPLETE.md     # Project completion summary
-└── README.md              # This file
-```
-
-## 🚀 Quick Start
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd travel-ai
-   ```
-
-2. **Run the startup script**
-   ```bash
-   chmod +x start_clean_project.sh
-   ./start_clean_project.sh
-   ```
-
-3. **Access the application**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8000
-   - API Docs: http://localhost:8000/docs
-
-## 🔑 Setup Requirements
-
-### Groq API Key
-To enable AI features, you need a Groq API key:
-1. Sign up at https://console.groq.com/
-2. Get your API key
-3. Add it to `.env` files in both `clean_frontend/` and `clean_backend/`
-
-## 🎯 User Journey
-
-1. **Chat with AI**: Tell the AI about your travel preferences
-2. **Get Recommendations**: Receive personalized destination suggestions
-3. **Select Destination**: Choose from AI-recommended destinations
-4. **Book Flights**: Browse and select flight options
-5. **Book Hotels**: Find and book accommodations
-6. **Plan Activities**: Discover and plan activities for your trip
+- **AI Chat**: Groq LLM-powered travel planning conversations
+- **Destination Recommendations**: AI-powered travel suggestions based on preferences
+- **Flight Search**: Real-time flight data using Amadeus API
+- **Weather Data**: Current weather and forecasts using WeatherAPI
+- **Currency Conversion**: Real-time exchange rates using ExchangeRate API
+- **Hotel Search**: Hotel recommendations and booking links
+- **Activity Planning**: Tourist activities and itinerary suggestions
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React 18, Tailwind CSS, Lucide React Icons
-- **Backend**: FastAPI, Pydantic, HTTPX
-- **AI**: Groq LLM (Llama 3.1 70B)
-- **Styling**: Glass morphism, gradient effects, dark theme
-- **Deployment**: Ready for deployment on platforms like Render
+- **Framework**: FastAPI
+- **Python**: 3.11.7
+- **AI**: Groq LLM (llama3-70b-8192)
+- **APIs**: Amadeus, WeatherAPI, ExchangeRate API
+- **Deployment**: Railway
 
-## 📱 UI Features
+## 📋 Prerequisites
 
-- **Dark Theme**: Beautiful dark gradient background
-- **Glass Morphism**: Translucent cards with blur effects
-- **Gradient Accents**: Purple to blue gradient styling
-- **Smooth Animations**: Hover effects and transitions
-- **Responsive Design**: Works on all devices
-- **Modern Typography**: Clean, readable text
+- Python 3.11+
+- API Keys for:
+  - Groq AI
+  - Amadeus (Flight Search)
+  - WeatherAPI
+  - ExchangeRate API
 
-## 🔧 Development
+## 🚀 Quick Start
 
-### Frontend Development
+### 1. Clone the Repository
 ```bash
-cd clean_frontend
-npm install
-npm start
+git clone https://github.com/Prannay-tech/travel-ai-backend.git
+cd travel-ai-backend
 ```
 
-### Backend Development
+### 2. Install Dependencies
 ```bash
-cd clean_backend
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload
 ```
 
-## 📊 API Endpoints
+### 3. Set Up Environment Variables
+Create a `.env` file with your API keys:
+```env
+GROQ_API_KEY=your_groq_api_key
+AMADEUS_CLIENT_ID=your_amadeus_client_id
+AMADEUS_CLIENT_SECRET=your_amadeus_client_secret
+WEATHER_API_KEY=your_weather_api_key
+CURRENCY_API_KEY=your_currency_api_key
+```
 
-- `POST /chat` - AI chat interface
-- `POST /recommendations` - Get travel recommendations
-- `GET /flights` - Search flights
-- `GET /hotels` - Search hotels
-- `GET /activities` - Search activities
-- `GET /health` - Health check
+### 4. Run the Application
+```bash
+python main.py
+```
+
+The API will be available at `http://localhost:8000`
+
+## 📚 API Endpoints
+
+### Health Check
+- `GET /health` - Check API status
+
+### AI Chat
+- `POST /chat` - AI-powered travel planning conversations
+
+### Travel Recommendations
+- `POST /recommendations` - Get AI-powered destination suggestions
+
+### Flight Search
+- `POST /flights` - Search for flights
+
+### Weather Data
+- `GET /weather/{location}` - Get current weather
+- `GET /weather/{location}/forecast` - Get weather forecast
+
+### Currency Conversion
+- `GET /currency/convert` - Convert between currencies
+- `GET /currency/rates` - Get exchange rates
+
+### Hotels & Activities
+- `POST /hotels` - Search for hotels
+- `POST /activities` - Search for activities
 
 ## 🚀 Deployment
 
-The project is ready for deployment:
-- Frontend can be deployed to Vercel, Netlify, or similar
-- Backend can be deployed to Render, Railway, or similar
-- Environment variables need to be configured for production
+### Railway Deployment
+1. Connect your GitHub repository to Railway
+2. Set environment variables in Railway dashboard
+3. Deploy automatically on push to main branch
 
-## 📈 Future Enhancements
+### Environment Variables for Railway
+Make sure to set these in your Railway project:
+- `GROQ_API_KEY`
+- `AMADEUS_CLIENT_ID`
+- `AMADEUS_CLIENT_SECRET`
+- `WEATHER_API_KEY`
+- `CURRENCY_API_KEY`
 
-- Real flight/hotel booking APIs integration
-- User accounts and trip history
-- Social sharing features
-- Mobile app development
-- Advanced AI features
+## 🧪 Testing
+
+Run the test suite:
+```bash
+python -m pytest test_main.py -v
+```
+
+## 📝 License
+
+This project is part of the Travel AI application.
 
 ## 🤝 Contributing
 
-This is a college project demonstrating modern web development with AI integration.
-
-## 📄 License
-
-This project is for educational purposes.
-
----
-
-**Built with ❤️ using React, FastAPI, and Groq AI** 
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request 
