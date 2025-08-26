@@ -53,7 +53,17 @@ from currency_api import currency_api
 # Pydantic Models
 class ChatMessage(BaseModel):
     message: str
+    session_id: str = "default-session"
     conversation_history: Optional[List[Dict[str, str]]] = None
+
+# Conversation state management
+conversation_states = {}
+
+class ConversationState(BaseModel):
+    session_id: str
+    current_step: str = "welcome"
+    collected_data: Dict = {}
+    messages: List[Dict[str, str]] = []
 
 class TravelPreferences(BaseModel):
     budget_per_person: str
@@ -86,18 +96,26 @@ class ActivitySearch(BaseModel):
 
 # AI System Prompt for Travel Planning
 AI_SYSTEM_PROMPT = """
-You are an expert AI travel planner. Your job is to help users plan their perfect trip by extracting their travel preferences from natural language conversations.
+You are an expert AI travel planner. Guide users through a structured conversation to collect their travel preferences.
 
-Key responsibilities:
-1. Extract travel preferences from user messages
-2. Ask clarifying questions when needed
-3. Provide helpful travel advice and suggestions
-4. Guide users through the planning process
+CONVERSATION FLOW:
+1. WELCOME: Greet and ask where they're traveling from
+2. DESTINATION_TYPE: Ask about type of destination (beach, mountain, city, etc.)
+3. BUDGET: Ask about budget per person
+4. DATES: Ask about travel dates
+5. RECOMMENDATIONS: Provide personalized recommendations
 
-Travel preference categories to extract:
-- Budget per person (e.g., "$1000-2000", "$500+")
-- Number of people traveling (e.g., "2 people", "family of 4")
-- Travel from location (e.g., "New York", "Los Angeles")
+IMPORTANT RULES:
+- Always acknowledge the information they provide
+- Ask ONE question at a time
+- Don't repeat the same question if they've already answered
+- Be conversational and friendly
+- If they mention multiple things, acknowledge all and focus on the next missing piece
+
+EXAMPLE RESPONSES:
+- "Great! I see you're traveling from Dallas. What type of destination are you looking for? Beach, mountain, city, or something else?"
+- "Perfect! A beach destination sounds amazing. What's your budget per person for this trip?"
+- "Excellent! With a $2000 budget, I can suggest some fantastic beach destinations. When are you planning to travel?"
 - Travel type: "domestic" or "international"
 - Destination type: "beach", "mountain", "city", "historic", "religious", "adventure", "relaxing"
 - Travel dates (e.g., "next summer", "December 2024")
@@ -506,13 +524,72 @@ async def health_check():
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatMessage):
-    """AI chat endpoint for travel planning conversations."""
+    """AI chat endpoint for travel planning conversations with state management."""
     try:
-        response = await call_groq_ai(request.message, request.conversation_history)
-        return {"response": response}
+        # Get or create conversation state
+        if request.session_id not in conversation_states:
+            conversation_states[request.session_id] = ConversationState(session_id=request.session_id)
+        
+        state = conversation_states[request.session_id]
+        
+        # Add user message to history
+        state.messages.append({"role": "user", "content": request.message})
+        
+        # Create conversation context
+        conversation_context = [
+            {"role": "system", "content": AI_SYSTEM_PROMPT + "\n\nCurrent conversation step: " + state.current_step + "\nCollected data: " + str(state.collected_data)}
+        ] + state.messages[-10:]  # Keep last 10 messages for context
+        
+        # Get AI response
+        response = await call_groq_ai(request.message, conversation_context)
+        
+        # Add AI response to history
+        state.messages.append({"role": "assistant", "content": response})
+        
+        # Update conversation state based on user input
+        await update_conversation_state(state, request.message)
+        
+        return {
+            "response": response,
+            "session_id": request.session_id,
+            "step": state.current_step,
+            "data_collected": state.collected_data
+        }
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail="Chat service error")
+
+async def update_conversation_state(state: ConversationState, user_message: str):
+    """Update conversation state based on user input."""
+    user_message_lower = user_message.lower()
+    
+    # Extract location if mentioned
+    if "from" in user_message_lower or "traveling from" in user_message_lower:
+        # Simple location extraction (you can make this more sophisticated)
+        words = user_message.split()
+        for i, word in enumerate(words):
+            if word.lower() in ["from", "traveling", "leaving"] and i + 1 < len(words):
+                location = words[i + 1]
+                if location.lower() not in ["to", "and", "or", "the", "a", "an"]:
+                    state.collected_data["travel_from"] = location
+                    state.current_step = "destination_type"
+                    break
+    
+    # Extract destination type
+    destination_keywords = ["beach", "mountain", "city", "historic", "adventure", "relaxing", "cultural"]
+    for keyword in destination_keywords:
+        if keyword in user_message_lower:
+            state.collected_data["destination_type"] = keyword
+            state.current_step = "budget"
+            break
+    
+    # Extract budget information
+    if any(word in user_message_lower for word in ["budget", "cost", "price", "$", "dollar"]):
+        state.current_step = "dates"
+    
+    # Extract travel dates
+    if any(word in user_message_lower for word in ["december", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november"]):
+        state.current_step = "recommendations"
 
 async def call_groq_recommendations(preferences: TravelPreferences) -> str:
     """Call Groq LLM to generate personalized travel recommendations."""
