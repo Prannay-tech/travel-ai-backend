@@ -33,7 +33,7 @@ app.add_middleware(
 )
 
 # API Keys and Configuration
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Real API Keys from environment variables
