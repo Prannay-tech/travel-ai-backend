@@ -33,17 +33,17 @@ app.add_middleware(
 )
 
 # API Keys and Configuration
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "your-groq-api-key-here")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# Real API Keys (you'll need to get these)
+# Real API Keys from environment variables
 SKYSCANNER_API_KEY = os.getenv("SKYSCANNER_API_KEY", "")
-AMADEUS_CLIENT_ID = os.getenv("AMADEUS_CLIENT_ID", "")
-AMADEUS_CLIENT_SECRET = os.getenv("AMADEUS_CLIENT_SECRET", "")
+AMADEUS_CLIENT_ID = os.getenv("AMADEUS_CLIENT_ID", "8W8ZGIcN61pNWmljxuc350cSGFUGXTCv")
+AMADEUS_CLIENT_SECRET = os.getenv("AMADEUS_CLIENT_SECRET", "4d7fY8brcLFkHMcG")
 HOTELS_API_KEY = os.getenv("HOTELS_API_KEY", "")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "0199245a95814f5a968202129251607")
 GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
-CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY", "")
+CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY", "sk-vasW68a7a30dd9e7f619")
 
 # Import flight search API
 from flight_apis import flight_api
