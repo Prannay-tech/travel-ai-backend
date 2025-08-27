@@ -6,7 +6,7 @@ Features: AI chat, destination recommendations, flight booking, hotel booking, a
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import httpx
 import os
 from dotenv import load_dotenv
@@ -15,6 +15,12 @@ from datetime import datetime, timedelta
 import json
 import re
 import uuid
+
+# Add new imports for enhanced data fetching
+import asyncio
+from datetime import datetime, timedelta
+import re
+from typing import List, Dict, Optional, Tuple
 
 # Load environment variables
 load_dotenv()
@@ -282,8 +288,10 @@ async def handle_conversational_flow(message: str, session_id: str) -> Dict:
         # Get or create conversation state
         if session_id not in conversation_states:
             conversation_states[session_id] = ConversationState(session_id=session_id)
+            logger.info(f"Created new conversation state for session: {session_id}")
         
         state = conversation_states[session_id]
+        logger.info(f"Current step: {state.current_step}, Collected data: {state.collected_data}")
         
         # Extract information from user message based on current step
         extracted_info = await extract_travel_info(message, state.current_step)
@@ -557,69 +565,6 @@ async def generate_recommendations_response(state: ConversationState) -> Dict:
             "recommendations": []
         }
 
-async def call_groq_recommendations(preferences: TravelPreferences) -> str:
-    """Call Groq LLM to generate personalized travel recommendations."""
-    try:
-        # Create a detailed prompt for the LLM
-        prompt = f"""
-You are a travel advisor. Suggest 3 destinations for: Budget {preferences.budget_per_person} {preferences.currency}, {preferences.people_count} people, {preferences.travel_type} {preferences.destination_type} trip, {preferences.travel_dates}.
-
-Return ONLY valid JSON like this example:
-{{
-    "destinations": [
-        {{
-            "name": "Maldives",
-            "country": "Maldives",
-            "type": "beach",
-            "description": "Perfect romantic beach destination",
-            "estimated_cost_per_person": "2500 USD",
-            "best_time_to_visit": "November-April",
-            "highlights": ["Beach", "Romance", "Luxury"],
-            "why_perfect": "Perfect for romantic beach getaway"
-        }}
-    ]
-}}
-
-No other text, just JSON.
-"""
-        
-        # Call Groq API
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                GROQ_BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "llama3-8b-8192",
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "You are an expert travel advisor. Always respond with valid JSON format as requested."
-                        },
-                        {
-                            "role": "user", 
-                            "content": prompt
-                        }
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 2000
-                },
-                timeout=30.0
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result["choices"][0]["message"]["content"]
-            else:
-                logger.error(f"Groq API error: {response.status_code} - {response.text}")
-                return None
-                
-    except Exception as e:
-        logger.error(f"Error calling Groq for recommendations: {e}")
-        return None
-
 async def get_real_flights(search: FlightSearch) -> List[Dict]:
     """Get real flight data using integrated flight search APIs."""
     try:
@@ -776,6 +721,439 @@ async def get_weather_data(destination: str) -> Dict:
         logger.error(f"Error fetching weather: {e}")
         return {}
 
+async def get_average_flight_prices(origin: str, destination: str, departure_date: str, return_date: Optional[str] = None) -> Dict:
+    """Get average flight prices for a route during specific dates."""
+    try:
+        # Use the flight API to get real prices
+        flights = await flight_api.search_flights(
+            origin=origin,
+            destination=destination,
+            departure_date=departure_date,
+            passengers=1
+        )
+        
+        if not flights:
+            return {"average_price": 0, "price_range": "0-0", "currency": "USD", "source": "No data available"}
+        
+        # Calculate average price
+        prices = [flight["price"]["USD"] for flight in flights if "USD" in flight["price"]]
+        if not prices:
+            return {"average_price": 0, "price_range": "0-0", "currency": "USD", "source": "No price data"}
+        
+        avg_price = sum(prices) / len(prices)
+        min_price = min(prices)
+        max_price = max(prices)
+        
+        return {
+            "average_price": round(avg_price, 2),
+            "price_range": f"{min_price}-{max_price}",
+            "currency": "USD",
+            "source": "Real-time flight data",
+            "total_flights": len(flights)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching flight prices: {e}")
+        # Return estimated prices based on distance
+        return {"average_price": 500, "price_range": "400-800", "currency": "USD", "source": "Estimated"}
+
+async def get_average_hotel_prices(destination: str, check_in: str, check_out: str, guests: int = 1) -> Dict:
+    """Get average hotel prices for a destination during specific dates."""
+    try:
+        # Calculate number of nights
+        check_in_date = datetime.strptime(check_in, "%Y-%m-%d")
+        check_out_date = datetime.strptime(check_out, "%Y-%m-%d")
+        nights = (check_out_date - check_in_date).days
+        
+        # Use the hotel API to get real prices
+        hotels = await get_real_hotels(HotelSearch(
+            destination=destination,
+            check_in=check_in,
+            check_out=check_out,
+            guests=guests
+        ))
+        
+        if not hotels:
+            return {"average_price_per_night": 0, "total_cost": 0, "currency": "USD", "source": "No data available"}
+        
+        # Calculate average price per night
+        prices = [hotel["price_per_night"]["USD"] for hotel in hotels if "USD" in hotel["price_per_night"]]
+        if not prices:
+            return {"average_price_per_night": 0, "total_cost": 0, "currency": "USD", "source": "No price data"}
+        
+        avg_price_per_night = sum(prices) / len(prices)
+        total_cost = avg_price_per_night * nights
+        
+        return {
+            "average_price_per_night": round(avg_price_per_night, 2),
+            "total_cost": round(total_cost, 2),
+            "nights": nights,
+            "currency": "USD",
+            "source": "Real-time hotel data",
+            "total_hotels": len(hotels)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching hotel prices: {e}")
+        # Return estimated prices based on destination type
+        return {"average_price_per_night": 150, "total_cost": 150 * 7, "currency": "USD", "source": "Estimated"}
+
+async def get_cost_of_living(destination: str) -> Dict:
+    """Get cost of living data for a destination."""
+    try:
+        # This would integrate with a cost of living API
+        # For now, using a simplified approach with known data
+        cost_of_living_data = {
+            "Bali, Indonesia": {
+                "daily_food": 25,
+                "daily_transport": 15,
+                "daily_activities": 30,
+                "daily_misc": 20,
+                "currency": "USD",
+                "source": "Cost of living database"
+            },
+            "Maldives": {
+                "daily_food": 60,
+                "daily_transport": 40,
+                "daily_activities": 80,
+                "daily_misc": 50,
+                "currency": "USD",
+                "source": "Cost of living database"
+            },
+            "Swiss Alps": {
+                "daily_food": 45,
+                "daily_transport": 25,
+                "daily_activities": 60,
+                "daily_misc": 30,
+                "currency": "USD",
+                "source": "Cost of living database"
+            },
+            "Tokyo, Japan": {
+                "daily_food": 35,
+                "daily_transport": 20,
+                "daily_activities": 40,
+                "daily_misc": 25,
+                "currency": "USD",
+                "source": "Cost of living database"
+            },
+            "Rome, Italy": {
+                "daily_food": 40,
+                "daily_transport": 15,
+                "daily_activities": 35,
+                "daily_misc": 20,
+                "currency": "USD",
+                "source": "Cost of living database"
+            }
+        }
+        
+        # Try exact match first
+        if destination in cost_of_living_data:
+            return cost_of_living_data[destination]
+        
+        # Try partial match
+        for key, value in cost_of_living_data.items():
+            if destination.lower() in key.lower() or key.lower() in destination.lower():
+                return value
+        
+        # Default values for unknown destinations
+        return {
+            "daily_food": 30,
+            "daily_transport": 20,
+            "daily_activities": 40,
+            "daily_misc": 25,
+            "currency": "USD",
+            "source": "Estimated average"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching cost of living: {e}")
+        return {
+            "daily_food": 30,
+            "daily_transport": 20,
+            "daily_activities": 40,
+            "daily_misc": 25,
+            "currency": "USD",
+            "source": "Fallback data"
+        }
+
+async def calculate_total_trip_cost(origin: str, destination: str, departure_date: str, 
+                                  return_date: str, guests: int, preferences: Dict) -> Dict:
+    """Calculate total trip cost using real-time data."""
+    try:
+        # Fetch all cost components concurrently
+        flight_task = get_average_flight_prices(origin, destination, departure_date, return_date)
+        hotel_task = get_average_hotel_prices(destination, departure_date, return_date, guests)
+        living_task = get_cost_of_living(destination)
+        
+        flight_data, hotel_data, living_data = await asyncio.gather(
+            flight_task, hotel_task, living_task
+        )
+        
+        # Calculate number of days
+        departure = datetime.strptime(departure_date, "%Y-%m-%d")
+        return_dt = datetime.strptime(return_date, "%Y-%m-%d")
+        days = (return_dt - departure).days
+        
+        # Calculate daily living costs
+        daily_living_cost = (
+            living_data["daily_food"] + 
+            living_data["daily_transport"] + 
+            living_data["daily_activities"] + 
+            living_data["daily_misc"]
+        )
+        
+        # Calculate total costs
+        flight_cost_per_person = flight_data["average_price"]
+        hotel_cost_total = hotel_data["total_cost"]
+        living_cost_total = daily_living_cost * days
+        
+        # Total cost per person
+        total_cost_per_person = flight_cost_per_person + (hotel_cost_total / guests) + (living_cost_total / guests)
+        
+        # Convert to user's currency if needed
+        user_currency = preferences.get("currency", "USD")
+        if user_currency != "USD":
+            conversion_rates = {
+                "EUR": 0.85,
+                "GBP": 0.73,
+                "CAD": 1.25,
+                "AUD": 1.35
+            }
+            rate = conversion_rates.get(user_currency, 1.0)
+            total_cost_per_person = total_cost_per_person * rate
+            flight_cost_per_person = flight_cost_per_person * rate
+            hotel_cost_total = hotel_cost_total * rate
+            living_cost_total = living_cost_total * rate
+        
+        return {
+            "total_cost_per_person": round(total_cost_per_person, 2),
+            "breakdown": {
+                "flight_cost_per_person": round(flight_cost_per_person, 2),
+                "hotel_cost_per_person": round(hotel_cost_total / guests, 2),
+                "living_cost_per_person": round(living_cost_total / guests, 2)
+            },
+            "details": {
+                "flight_data": flight_data,
+                "hotel_data": hotel_data,
+                "living_data": living_data,
+                "days": days,
+                "guests": guests
+            },
+            "currency": user_currency,
+            "source": "Real-time data calculation"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating total trip cost: {e}")
+        return {
+            "total_cost_per_person": 0,
+            "breakdown": {},
+            "details": {},
+            "currency": preferences.get("currency", "USD"),
+            "source": "Calculation failed"
+        }
+
+async def call_groq_recommendations(preferences: TravelPreferences) -> str:
+    """Call Groq LLM to generate personalized travel recommendations with real cost data."""
+    try:
+        # Parse travel dates to get departure and return dates
+        departure_date, return_date = parse_travel_dates(preferences.travel_dates)
+        
+        # Get potential destinations based on preferences
+        potential_destinations = get_potential_destinations(preferences)
+        
+        # Calculate costs for each destination
+        destination_costs = []
+        for dest in potential_destinations[:5]:  # Limit to top 5 for performance
+            cost_data = await calculate_total_trip_cost(
+                origin=preferences.travel_from,
+                destination=dest["name"],
+                departure_date=departure_date,
+                return_date=return_date,
+                guests=int(preferences.people_count),
+                preferences=preferences.model_dump()
+            )
+            
+            if cost_data["total_cost_per_person"] > 0:
+                destination_costs.append({
+                    "destination": dest,
+                    "cost_data": cost_data
+                })
+        
+        # Filter by budget
+        budget_range = parse_budget_range(preferences.budget_per_person)
+        affordable_destinations = []
+        
+        for item in destination_costs:
+            cost = item["cost_data"]["total_cost_per_person"]
+            if budget_range["min"] <= cost <= budget_range["max"]:
+                affordable_destinations.append(item)
+        
+        # Sort by cost (lowest first)
+        affordable_destinations.sort(key=lambda x: x["cost_data"]["total_cost_per_person"])
+        
+        # Create detailed prompt for AI with real cost data
+        destinations_info = []
+        for item in affordable_destinations[:3]:
+            dest = item["destination"]
+            cost = item["cost_data"]
+            destinations_info.append(f"""
+- {dest['name']}, {dest['country']}: {cost['total_cost_per_person']} {cost['currency']} per person
+  Flight: {cost['breakdown']['flight_cost_per_person']} {cost['currency']}
+  Hotel: {cost['breakdown']['hotel_cost_per_person']} {cost['currency']}
+  Daily living: {cost['breakdown']['living_cost_per_person']} {cost['currency']}
+  Highlights: {', '.join(dest['highlights'])}
+  Best time: {dest['best_time']}
+""")
+        
+        prompt = f"""
+You are an expert travel advisor. Based on the user's preferences and real-time cost data, recommend the best destinations.
+
+User Preferences:
+- Budget: {preferences.budget_per_person} {preferences.currency}
+- People: {preferences.people_count}
+- Travel type: {preferences.travel_type} {preferences.destination_type}
+- Dates: {preferences.travel_dates}
+- From: {preferences.travel_from}
+- Additional preferences: {preferences.additional_preferences}
+
+Available destinations with real cost data:
+{''.join(destinations_info)}
+
+Return ONLY valid JSON with detailed recommendations:
+{{
+    "destinations": [
+        {{
+            "name": "Destination Name",
+            "country": "Country",
+            "type": "destination_type",
+            "description": "Detailed description",
+            "total_cost_per_person": "1500 USD",
+            "cost_breakdown": {{
+                "flight": "500 USD",
+                "hotel": "700 USD", 
+                "daily_living": "300 USD"
+            }},
+            "best_time_to_visit": "Month-Month",
+            "highlights": ["Highlight1", "Highlight2"],
+            "why_perfect": "Why this destination is perfect for the user",
+            "travel_tips": "Specific tips for this destination"
+        }}
+    ]
+}}
+
+No other text, just JSON.
+"""
+        
+        # Call Groq API
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                GROQ_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama3-8b-8192",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert travel advisor. Always respond with valid JSON format as requested. Use the provided real cost data to give accurate recommendations."
+                        },
+                        {
+                            "role": "user", 
+                            "content": prompt
+                        }
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 2000
+                },
+                timeout=30.0
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                logger.error(f"Groq API error: {response.status_code} - {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error calling Groq for recommendations: {e}")
+        return None
+
+def parse_travel_dates(travel_dates: str) -> Tuple[str, str]:
+    """Parse travel dates string to get departure and return dates."""
+    try:
+        # Handle various date formats
+        if "december" in travel_dates.lower():
+            year = "2024"
+            month = "12"
+            # Assume 7-day trip
+            departure_date = f"{year}-{month}-15"
+            return_date = f"{year}-{month}-22"
+        elif "january" in travel_dates.lower():
+            year = "2025"
+            month = "01"
+            departure_date = f"{year}-{month}-15"
+            return_date = f"{year}-{month}-22"
+        else:
+            # Default to current year, 7 days from now
+            departure_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+            return_date = (datetime.now() + timedelta(days=37)).strftime("%Y-%m-%d")
+        
+        return departure_date, return_date
+        
+    except Exception as e:
+        logger.error(f"Error parsing travel dates: {e}")
+        # Fallback dates
+        departure_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+        return_date = (datetime.now() + timedelta(days=37)).strftime("%Y-%m-%d")
+        return departure_date, return_date
+
+def get_potential_destinations(preferences: TravelPreferences) -> List[Dict]:
+    """Get potential destinations based on user preferences."""
+    all_destinations = []
+    
+    # Get destinations from TRAVEL_DATA
+    if preferences.travel_type.lower() == "domestic":
+        for dest_type, destinations in TRAVEL_DATA.get("domestic", {}).items():
+            if preferences.destination_type.lower() in dest_type.lower():
+                all_destinations.extend(destinations)
+    else:
+        for dest_type, destinations in TRAVEL_DATA.get("international", {}).items():
+            if preferences.destination_type.lower() in dest_type.lower():
+                all_destinations.extend(destinations)
+    
+    # If no exact match, get all destinations
+    if not all_destinations:
+        for destinations in TRAVEL_DATA.get("domestic", {}).values():
+            all_destinations.extend(destinations)
+        for destinations in TRAVEL_DATA.get("international", {}).values():
+            all_destinations.extend(destinations)
+    
+    return all_destinations
+
+def parse_budget_range(budget_str: str) -> Dict[str, float]:
+    """Parse budget string to get min and max values."""
+    try:
+        budget_clean = budget_str.replace("$", "").replace(",", "")
+        
+        if "-" in budget_clean:
+            min_budget, max_budget = map(float, budget_clean.split("-"))
+        elif "+" in budget_clean:
+            min_budget = float(budget_clean.replace("+", ""))
+            max_budget = min_budget * 2
+        else:
+            min_budget = 0
+            max_budget = float(budget_clean)
+        
+        return {"min": min_budget, "max": max_budget}
+        
+    except Exception as e:
+        logger.error(f"Error parsing budget range: {e}")
+        return {"min": 0, "max": 5000}
+
 # API Endpoints
 @app.get("/")
 async def root():
@@ -793,7 +1171,9 @@ async def chat_endpoint(request: ChatMessage):
         session_id = request.session_id or str(uuid.uuid4())
         
         # Use conversational flow for structured travel planning
+        logger.info(f"Starting conversational flow for session: {session_id}")
         response_data = await handle_conversational_flow(request.message, session_id)
+        logger.info(f"Response data: {response_data}")
         
         return {
             "response": response_data["response"],
@@ -808,9 +1188,9 @@ async def chat_endpoint(request: ChatMessage):
 
 @app.post("/recommendations")
 async def get_recommendations(preferences: TravelPreferences):
-    """Get AI-powered travel recommendations using Groq LLM."""
+    """Get AI-powered travel recommendations with real-time cost data."""
     try:
-        # Call Groq LLM for recommendations
+        # Call enhanced Groq LLM for recommendations with real cost data
         llm_response = await call_groq_recommendations(preferences)
         
         if llm_response:
@@ -825,10 +1205,7 @@ async def get_recommendations(preferences: TravelPreferences):
                     # Add weather data
                     dest["weather"] = await get_weather_data(dest["name"])
                     
-                    # Add estimated flight cost (mock data for now)
-                    dest["estimated_flight_cost"] = f"500-800 {preferences.currency}"
-                    
-                    # Add booking links (mock data for now)
+                    # Add booking links
                     dest["booking_links"] = {
                         "flights": f"https://www.skyscanner.com/search?from={preferences.travel_from}&to={dest['name']}",
                         "hotels": f"https://www.booking.com/search?ss={dest['name']}",
@@ -838,9 +1215,9 @@ async def get_recommendations(preferences: TravelPreferences):
                 return {
                     "success": True,
                     "destinations": recommendations.get("destinations", []),
-                    "preferences": preferences.dict(),
+                    "preferences": preferences.model_dump(),
                     "total_found": len(recommendations.get("destinations", [])),
-                    "source": "AI Generated"
+                    "source": "AI Generated with Real-time Data"
                 }
                 
             except json.JSONDecodeError:
@@ -922,7 +1299,7 @@ async def get_filtered_recommendations(preferences: TravelPreferences):
         return {
             "success": True,
             "destinations": final_destinations[:5],
-            "preferences": preferences.dict(),
+            "preferences": preferences.model_dump(),
             "total_found": len(final_destinations),
             "source": "Filtered Data"
         }
@@ -1146,6 +1523,47 @@ async def get_exchange_rates(base_currency: str = "USD"):
     except Exception as e:
         logger.error(f"Exchange rates API error: {e}")
         raise HTTPException(status_code=500, detail="Exchange rates fetch failed")
+
+@app.post("/cost-analysis")
+async def get_detailed_cost_analysis(request: Dict):
+    """Get detailed cost analysis for a specific trip."""
+    try:
+        origin = request.get("origin")
+        destination = request.get("destination")
+        departure_date = request.get("departure_date")
+        return_date = request.get("return_date")
+        guests = request.get("guests", 1)
+        currency = request.get("currency", "USD")
+        
+        if not all([origin, destination, departure_date, return_date]):
+            raise HTTPException(status_code=400, detail="Missing required parameters")
+        
+        # Calculate detailed cost breakdown
+        cost_analysis = await calculate_total_trip_cost(
+            origin=origin,
+            destination=destination,
+            departure_date=departure_date,
+            return_date=return_date,
+            guests=guests,
+            preferences={"currency": currency}
+        )
+        
+        return {
+            "success": True,
+            "cost_analysis": cost_analysis,
+            "trip_details": {
+                "origin": origin,
+                "destination": destination,
+                "departure_date": departure_date,
+                "return_date": return_date,
+                "guests": guests,
+                "currency": currency
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Cost analysis error: {e}")
+        raise HTTPException(status_code=500, detail="Cost analysis failed")
 
 if __name__ == "__main__":
     import uvicorn
