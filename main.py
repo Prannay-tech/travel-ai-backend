@@ -3,7 +3,7 @@ Comprehensive Travel AI Backend - AI-powered travel planning with booking integr
 Features: AI chat, destination recommendations, flight booking, hotel booking, activity planning.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Tuple
@@ -12,6 +12,8 @@ import os
 from dotenv import load_dotenv
 import logging
 from datetime import datetime, timedelta
+import hashlib
+import secrets
 import json
 import re
 import uuid
@@ -102,8 +104,35 @@ class ActivitySearch(BaseModel):
     date: str
     participants: int = 1
 
+# Simple auth models
+class RegisterRequest(BaseModel):
+    name: Optional[str] = None
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class AuthResponse(BaseModel):
+    token: str
+    user: Dict[str, str]
+
 # Conversation state storage (in production, use Redis or database)
 conversation_states = {}
+
+# In-memory users and tokens (replace with DB + JWT later)
+users_db: Dict[str, Dict[str, str]] = {}
+token_to_email: Dict[str, str] = {}
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(password: str, hashed: str) -> bool:
+    return hash_password(password) == hashed
+
+def generate_token() -> str:
+    return secrets.token_urlsafe(32)
 
 # AI System Prompt for Travel Planning
 AI_SYSTEM_PROMPT = """
@@ -2935,6 +2964,49 @@ async def get_weather_info(city: str) -> Dict:
     except Exception as e:
         logger.error(f"Error getting weather info: {e}")
         return {}
+
+# ----------------------
+# Auth Endpoints (minimal)
+# ----------------------
+
+@app.post("/auth/register", response_model=AuthResponse)
+async def register_user(payload: RegisterRequest):
+    email = payload.email.strip().lower()
+    if not email or not payload.password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+    if email in users_db:
+        raise HTTPException(status_code=400, detail="User already exists")
+    users_db[email] = {
+        "name": payload.name or email.split("@")[0],
+        "email": email,
+        "password_hash": hash_password(payload.password),
+    }
+    token = generate_token()
+    token_to_email[token] = email
+    return {"token": token, "user": {"name": users_db[email]["name"], "email": email}}
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login_user(payload: LoginRequest):
+    email = payload.email.strip().lower()
+    user = users_db.get(email)
+    if not user or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = generate_token()
+    token_to_email[token] = email
+    return {"token": token, "user": {"name": user["name"], "email": email}}
+
+
+@app.get("/auth/me")
+async def auth_me(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    token = authorization.split(" ", 1)[1]
+    email = token_to_email.get(token)
+    if not email or email not in users_db:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = users_db[email]
+    return {"user": {"name": user["name"], "email": email}}
 
 if __name__ == "__main__":
     import uvicorn

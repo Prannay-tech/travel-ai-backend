@@ -22,7 +22,27 @@ export default function AuthForm({ mode, onSubmit }: AuthFormProps) {
     if (loading) return;
     setLoading(true);
     try {
-      await onSubmit?.({ name: name || undefined, email, password });
+      if (onSubmit) {
+        await onSubmit({ name: name || undefined, email, password });
+      } else {
+        const base = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+        const url = mode === 'login' ? `${base}/auth/login` : `${base}/auth/register`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password }),
+        });
+        if (!res.ok) {
+          const msg = await res.json().catch(() => ({} as any));
+          throw new Error(msg?.detail || 'Authentication failed');
+        }
+        const data = await res.json();
+        // Store token for later calls (simple client-side session)
+        if (data?.token) localStorage.setItem('auth_token', data.token);
+        if (data?.user) localStorage.setItem('auth_user', JSON.stringify(data.user));
+        // Redirect to home after auth
+        window.location.href = '/';
+      }
     } finally {
       setLoading(false);
     }
