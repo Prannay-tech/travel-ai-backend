@@ -6,11 +6,12 @@ Supports multiple flight search providers for comprehensive results.
 import httpx
 import os
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime, timedelta
 import json
 import asyncio
 from dotenv import load_dotenv
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,65 @@ class FlightSearchAPI:
         self.skyscanner_available = bool(SKYSCANNER_API_KEY)
         self.amadeus_available = bool(AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET)
         self.amadeus_token = None
+        # simple in-memory cache and rate limiter state
+        self._cache: Dict[str, Tuple[float, Any]] = {}
+        self._cache_ttl_seconds = 900  # 15 minutes default
+        self._last_calls: Dict[str, List[float]] = {}
+        self._rate_limit_default = (30, 60)  # 30 requests per 60s per endpoint
+
+    def _cache_key(self, url: str, params: Optional[Dict]=None) -> str:
+        key = url
+        if params:
+            try:
+                key += "?" + "&".join(f"{k}={params[k]}" for k in sorted(params.keys()))
+            except Exception:
+                key += f"?{str(params)}"
+        return key
+
+    def _cache_get(self, key: str) -> Optional[Any]:
+        now = time.time()
+        entry = self._cache.get(key)
+        if not entry:
+            return None
+        expires_at, value = entry
+        if now > expires_at:
+            self._cache.pop(key, None)
+            return None
+        return value
+
+    def _cache_set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        ttl = ttl or self._cache_ttl_seconds
+        self._cache[key] = (time.time() + ttl, value)
+
+    async def _rate_limit(self, bucket: str, limit: Optional[int] = None, window_seconds: Optional[int] = None):
+        limit = limit or self._rate_limit_default[0]
+        window_seconds = window_seconds or self._rate_limit_default[1]
+        now = time.time()
+        calls = self._last_calls.get(bucket, [])
+        # drop old
+        calls = [t for t in calls if now - t < window_seconds]
+        if len(calls) >= limit:
+            # backoff: sleep small amount to smooth burst
+            await asyncio.sleep(0.5)
+            return await self._rate_limit(bucket, limit, window_seconds)
+        calls.append(now)
+        self._last_calls[bucket] = calls
+
+    async def _cached_get(self, client: httpx.AsyncClient, url: str, *, params: Optional[Dict]=None, headers: Optional[Dict]=None, ttl: Optional[int]=None) -> httpx.Response:
+        await self._rate_limit(f"GET:{url}")
+        key = self._cache_key(url, params)
+        cached = self._cache_get(key)
+        if cached is not None:
+            # synthesize response-like object
+            resp = httpx.Response(200, json=cached)
+            return resp
+        resp = await client.get(url, params=params, headers=headers)
+        try:
+            if resp.status_code == 200:
+                self._cache_set(key, resp.json(), ttl)
+        except Exception:
+            pass
+        return resp
         
     async def get_amadeus_token(self) -> Optional[str]:
         """Get Amadeus API access token"""
@@ -97,7 +157,8 @@ class FlightSearchAPI:
                 # Select optimal endpoint based on search type
                 if search_type == "roundtrip" and return_date:
                     # Use roundtrip search for complete trips
-                    response = await client.get(
+                    response = await self._cached_get(
+                        client,
                         "https://flights-sky.p.rapidapi.com/flights/search-roundtrip",
                         params={
                             "fromEntityId": origin_id,
@@ -108,7 +169,8 @@ class FlightSearchAPI:
                         headers={
                             "X-RapidAPI-Key": SKYSCANNER_API_KEY,
                             "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
-                        }
+                        },
+                        ttl=900,
                     )
                     
                     if response.status_code == 200:
@@ -116,7 +178,8 @@ class FlightSearchAPI:
                         return self._parse_roundtrip_results(data, origin, destination, departure_date, return_date)
                 else:
                     # Use cheapest-one-way for price comparison
-                    response = await client.get(
+                    response = await self._cached_get(
+                        client,
                         "https://flights-sky.p.rapidapi.com/flights/cheapest-one-way",
                         params={
                             "fromEntityId": origin_id,
@@ -126,7 +189,8 @@ class FlightSearchAPI:
                         headers={
                             "X-RapidAPI-Key": SKYSCANNER_API_KEY,
                             "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
-                        }
+                        },
+                        ttl=900,
                     )
                     
                     if response.status_code == 200:
