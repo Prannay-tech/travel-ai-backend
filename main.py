@@ -54,9 +54,10 @@ GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY", "")
 
 # Import flight search API
-from flight_apis import flight_api
+from flight_apis import flight_api, FlightSearchAPI
 from weather_api import weather_api
 from currency_api import currency_api
+from cost_of_living_dataset import cost_of_living_dataset
 
 # Pydantic Models
 class ChatMessage(BaseModel):
@@ -261,7 +262,7 @@ async def call_groq_ai(message: str, conversation_history: List[Dict[str, str]] 
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama3-70b-8192",
+                    "model": "llama-3.1-70b-versatile",
                     "messages": messages,
                     "temperature": 0.3,
                     "max_tokens": 800,
@@ -605,9 +606,9 @@ async def get_real_flights(search: FlightSearch) -> List[Dict]:
         ]
 
 async def get_real_hotels(search: HotelSearch) -> List[Dict]:
-    """Get real hotel data from Hotels.com API or similar."""
+    """Get real hotel data from RapidAPI Skyscanner Hotel API."""
     try:
-        if not HOTELS_API_KEY:
+        if not SKYSCANNER_API_KEY:
             # Return mock data if no API key
             return [
                 {
@@ -632,19 +633,96 @@ async def get_real_hotels(search: HotelSearch) -> List[Dict]:
                 }
             ]
 
-        # Real API call would go here
-        # async with httpx.AsyncClient() as client:
-        #     response = await client.get(
-        #         f"https://hotels-com-provider.p.rapidapi.com/v1/hotels/search",
-        #         headers={"X-RapidAPI-Key": HOTELS_API_KEY},
-        #         params={
-        #             "query": search.destination,
-        #             "checkin_date": search.check_in,
-        #             "checkout_date": search.check_out,
-        #             "adults_number": search.guests
-        #         }
-        #     )
-        #     return response.json()
+        # Get entity ID for the destination using RapidAPI Skyscanner
+        async with httpx.AsyncClient() as client:
+            # First, get the entity ID for the destination
+            auto_complete_response = await client.get(
+                "https://flights-sky.p.rapidapi.com/hotels/auto-complete",
+                params={"query": search.destination},
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if auto_complete_response.status_code != 200:
+                logger.error(f"Hotel auto-complete error: {auto_complete_response.status_code}")
+                return []
+            
+            auto_complete_data = auto_complete_response.json()
+            if not auto_complete_data.get("data") or not auto_complete_data["data"]:
+                logger.error("No hotel destinations found")
+                return []
+            
+            # Find the first city result
+            entity_id = None
+            for result in auto_complete_data["data"]:
+                if result.get("entityType") == "city":
+                    entity_id = result.get("entityId")
+                    break
+            
+            if not entity_id:
+                logger.error("No city entity ID found")
+                return []
+            
+            # Search for hotels
+            hotel_search_response = await client.get(
+                "https://flights-sky.p.rapidapi.com/hotels/search",
+                params={
+                    "entityId": entity_id,
+                    "checkin": search.check_in,
+                    "checkout": search.check_out,
+                    "guests": search.guests
+                },
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if hotel_search_response.status_code != 200:
+                logger.error(f"Hotel search error: {hotel_search_response.status_code}")
+                return []
+            
+            search_data = hotel_search_response.json()
+            if not search_data.get("data") or not search_data["data"].get("results"):
+                logger.error("No hotel search results")
+                return []
+            
+            # Parse hotel results
+            hotels = []
+            hotel_cards = search_data["data"]["results"].get("hotelCards", [])
+            
+            for hotel_card in hotel_cards[:10]:  # Limit to 10 hotels
+                hotel_info = hotel_card.get("hotel", {})
+                pricing = hotel_card.get("pricing", {})
+                
+                # Extract price information
+                price_per_night = {}
+                if pricing.get("price"):
+                    price_per_night["USD"] = pricing["price"]
+                
+                # Extract amenities
+                amenities = []
+                if hotel_info.get("amenities"):
+                    amenities = [amenity.get("name", "") for amenity in hotel_info["amenities"][:5]]
+                
+                hotel = {
+                    "id": str(hotel_info.get("id", "")),
+                    "name": hotel_info.get("name", "Unknown Hotel"),
+                    "rating": hotel_info.get("rating", 0),
+                    "price_per_night": price_per_night,
+                    "location": f"{hotel_info.get('address', {}).get('city', '')}, {hotel_info.get('address', {}).get('country', '')}",
+                    "amenities": amenities,
+                    "booking_link": pricing.get("deeplink", "https://www.skyscanner.com"),
+                    "image": hotel_info.get("images", [{}])[0].get("url", "") if hotel_info.get("images") else "",
+                    "stars": hotel_info.get("stars", 0),
+                    "description": hotel_info.get("description", "")
+                }
+                hotels.append(hotel)
+            
+            logger.info(f"Found {len(hotels)} hotels for {search.destination}")
+            return hotels
 
     except Exception as e:
         logger.error(f"Error fetching hotels: {e}")
@@ -799,71 +877,21 @@ async def get_average_hotel_prices(destination: str, check_in: str, check_out: s
         return {"average_price_per_night": 150, "total_cost": 150 * 7, "currency": "USD", "source": "Estimated"}
 
 async def get_cost_of_living(destination: str) -> Dict:
-    """Get cost of living data for a destination."""
+    """Get cost of living data for a destination using the dataset."""
     try:
-        # This would integrate with a cost of living API
-        # For now, using a simplified approach with known data
-        cost_of_living_data = {
-            "Bali, Indonesia": {
-                "daily_food": 25,
-                "daily_transport": 15,
-                "daily_activities": 30,
-                "daily_misc": 20,
-                "currency": "USD",
-                "source": "Cost of living database"
-            },
-            "Maldives": {
-                "daily_food": 60,
-                "daily_transport": 40,
-                "daily_activities": 80,
-                "daily_misc": 50,
-                "currency": "USD",
-                "source": "Cost of living database"
-            },
-            "Swiss Alps": {
-                "daily_food": 45,
-                "daily_transport": 25,
-                "daily_activities": 60,
-                "daily_misc": 30,
-                "currency": "USD",
-                "source": "Cost of living database"
-            },
-            "Tokyo, Japan": {
-                "daily_food": 35,
-                "daily_transport": 20,
-                "daily_activities": 40,
-                "daily_misc": 25,
-                "currency": "USD",
-                "source": "Cost of living database"
-            },
-            "Rome, Italy": {
-                "daily_food": 40,
-                "daily_transport": 15,
-                "daily_activities": 35,
-                "daily_misc": 20,
-                "currency": "USD",
-                "source": "Cost of living database"
-            }
-        }
+        # Parse destination to extract city and country
+        if "," in destination:
+            city, country = destination.split(",", 1)
+            city = city.strip()
+            country = country.strip()
+        else:
+            city = destination
+            country = None
         
-        # Try exact match first
-        if destination in cost_of_living_data:
-            return cost_of_living_data[destination]
+        # Use the dataset-based cost of living system
+        cost_data = await cost_of_living_dataset.get_cost_of_living(city, country)
         
-        # Try partial match
-        for key, value in cost_of_living_data.items():
-            if destination.lower() in key.lower() or key.lower() in destination.lower():
-                return value
-        
-        # Default values for unknown destinations
-        return {
-            "daily_food": 30,
-            "daily_transport": 20,
-            "daily_activities": 40,
-            "daily_misc": 25,
-            "currency": "USD",
-            "source": "Estimated average"
-        }
+        return cost_data
         
     except Exception as e:
         logger.error(f"Error fetching cost of living: {e}")
@@ -872,6 +900,7 @@ async def get_cost_of_living(destination: str) -> Dict:
             "daily_transport": 20,
             "daily_activities": 40,
             "daily_misc": 25,
+            "daily_total": 115,
             "currency": "USD",
             "source": "Fallback data"
         }
@@ -1054,7 +1083,7 @@ No other text, just JSON.
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama3-8b-8192",
+                    "model": "llama-3.1-8b-instant",
                     "messages": [
                         {
                             "role": "system",
@@ -1322,6 +1351,353 @@ async def search_flights(search: FlightSearch):
         logger.error(f"Flight search error: {e}")
         raise HTTPException(status_code=500, detail="Flight search error")
 
+@app.get("/price-calendar")
+async def get_price_calendar(origin: str, destination: str):
+    """Get price calendar for flexible date searches"""
+    try:
+        flight_api = FlightSearchAPI()
+        calendar_data = await flight_api.get_price_calendar(origin, destination)
+        
+        if not calendar_data:
+            return {"error": "No price calendar data available", "calendar": []}
+        
+        return {
+            "origin": origin,
+            "destination": destination,
+            "calendar": calendar_data,
+            "total_days": len(calendar_data),
+            "data_source": "RapidAPI Skyscanner"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting price calendar: {e}")
+        return {"error": str(e), "calendar": []}
+
+@app.get("/validate-airport/{airport_code}")
+async def validate_airport(airport_code: str):
+    """Validate airport code and get airport information"""
+    try:
+        flight_api = FlightSearchAPI()
+        result = await flight_api.validate_airport_code(airport_code.upper())
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error validating airport: {e}")
+        return {"valid": False, "error": str(e)}
+
+@app.get("/flight-search-options")
+async def get_flight_search_options():
+    """Get available flight search options and endpoints"""
+    return {
+        "search_types": ["one-way", "roundtrip", "multi-city", "everywhere"],
+        "endpoints": {
+            "flights": "Search flights (one-way/roundtrip)",
+            "cheapest_one_way": "Get cheapest one-way flights",
+            "search_everywhere": "Search flights to everywhere from a location",
+            "search_multi_city": "Search multi-city flights",
+            "price_calendar": "Get price calendar for flexible dates",
+            "price_calendar_web": "Get monthly price calendar view",
+            "price_calendar_web_return": "Get monthly return price calendar",
+            "validate_airport": "Validate airport codes",
+            "search_incomplete": "Get incomplete search results (polling)",
+            "flight_detail": "Get detailed flight information"
+        },
+        "features": {
+            "real_time_prices": True,
+            "price_calendar": True,
+            "monthly_calendar": True,
+            "airport_validation": True,
+            "roundtrip_search": True,
+            "multi_city_search": True,
+            "everywhere_search": True,
+            "place_id_conversion": True,
+            "polling_support": True,
+            "detailed_flight_info": True
+        },
+        "data_sources": ["RapidAPI Skyscanner", "Amadeus"],
+        "coverage": "95% global flight data",
+        "total_endpoints": 10
+    }
+
+@app.get("/hotel-search-options")
+async def get_hotel_search_options():
+    """Get available hotel search options and endpoints"""
+    return {
+        "search_types": ["city_search", "hotel_prices", "hotel_reviews"],
+        "endpoints": {
+            "hotels": "Search hotels by destination and dates",
+            "hotel_auto_complete": "Auto-complete hotel destinations",
+            "hotel_prices": "Get specific hotel prices",
+            "hotel_reviews": "Get hotel reviews",
+            "similar_hotels": "Find similar hotels"
+        },
+        "features": {
+            "real_time_prices": True,
+            "multiple_partners": True,
+            "hotel_reviews": True,
+            "price_comparison": True,
+            "booking_links": True
+        },
+        "data_sources": ["RapidAPI Skyscanner Hotels"],
+        "partners": ["Booking.com", "Hotels.com", "Expedia", "Priceline", "SuperTravel"],
+        "coverage": "Global hotel data"
+    }
+
+@app.get("/hotels/auto-complete")
+async def hotel_auto_complete(query: str):
+    """Auto-complete hotel destinations"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://flights-sky.p.rapidapi.com/hotels/auto-complete",
+                params={"query": query},
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "query": query,
+                    "results": data.get("data", []),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error in hotel auto-complete: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/hotels/prices")
+async def get_hotel_prices(hotel_id: str, checkin: str, checkout: str):
+    """Get specific hotel prices"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://flights-sky.p.rapidapi.com/hotels/prices",
+                params={
+                    "hotelId": hotel_id,
+                    "checkin": checkin,
+                    "checkout": checkout
+                },
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "hotel_id": hotel_id,
+                    "checkin": checkin,
+                    "checkout": checkout,
+                    "prices": data.get("data", {}),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error getting hotel prices: {e}")
+        return {"success": False, "error": str(e)}
+
+# Additional Flight Endpoints
+@app.get("/flights/search-everywhere")
+async def search_everywhere_flights(from_entity_id: str, type: str = "oneway"):
+    """Search for flights to everywhere from a specific location"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://flights-sky.p.rapidapi.com/flights/search-everywhere",
+                params={
+                    "fromEntityId": from_entity_id,
+                    "type": type
+                },
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "from_entity_id": from_entity_id,
+                    "type": type,
+                    "results": data.get("data", {}),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error in search-everywhere: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/flights/search-multi-city")
+async def search_multi_city_flights(request: dict):
+    """Search for multi-city flights"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://flights-sky.p.rapidapi.com/flights/search-multi-city",
+                json=request,
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "request": request,
+                    "results": data.get("data", {}),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error in multi-city search: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/flights/search-incomplete")
+async def search_incomplete_flights():
+    """Get incomplete flight search results (for polling)"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://flights-sky.p.rapidapi.com/flights/search-incomplete",
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "results": data.get("data", {}),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error getting incomplete results: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/flights/detail")
+async def get_flight_detail():
+    """Get detailed flight information"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://flights-sky.p.rapidapi.com/flights/detail",
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "results": data.get("data", {}),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error getting flight details: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/flights/price-calendar-web")
+async def get_price_calendar_web(from_entity_id: str, to_entity_id: str, year_month: str):
+    """Get price calendar for web (monthly view)"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://flights-sky.p.rapidapi.com/flights/price-calendar-web",
+                params={
+                    "fromEntityId": from_entity_id,
+                    "toEntityId": to_entity_id,
+                    "yearMonth": year_month
+                },
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "from_entity_id": from_entity_id,
+                    "to_entity_id": to_entity_id,
+                    "year_month": year_month,
+                    "calendar": data.get("data", {}),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error getting price calendar web: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/flights/price-calendar-web-return")
+async def get_price_calendar_web_return(from_entity_id: str, to_entity_id: str, year_month: str, year_month_return: str):
+    """Get price calendar for web return flights (monthly view)"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://flights-sky.p.rapidapi.com/flights/price-calendar-web-return",
+                params={
+                    "fromEntityId": from_entity_id,
+                    "toEntityId": to_entity_id,
+                    "yearMonth": year_month,
+                    "yearMonthReturn": year_month_return
+                },
+                headers={
+                    "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                    "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "success": True,
+                    "from_entity_id": from_entity_id,
+                    "to_entity_id": to_entity_id,
+                    "year_month": year_month,
+                    "year_month_return": year_month_return,
+                    "calendar": data.get("data", {}),
+                    "data_source": "RapidAPI Skyscanner"
+                }
+            else:
+                return {"success": False, "error": f"API error: {response.status_code}"}
+                
+    except Exception as e:
+        logger.error(f"Error getting price calendar web return: {e}")
+        return {"success": False, "error": str(e)}
+
 @app.post("/hotels")
 async def search_hotels(search: HotelSearch):
     """Search for hotels."""
@@ -1564,6 +1940,1001 @@ async def get_detailed_cost_analysis(request: Dict):
     except Exception as e:
         logger.error(f"Cost analysis error: {e}")
         raise HTTPException(status_code=500, detail="Cost analysis failed")
+
+@app.get("/cost-of-living/{city}")
+async def get_cost_of_living_data(city: str, country: str = None):
+    """Get detailed cost of living data for a specific city."""
+    try:
+        cost_data = await cost_of_living_dataset.get_cost_of_living(city, country)
+        
+        return {
+            "success": True,
+            "city": city,
+            "country": country,
+            "cost_of_living": cost_data,
+            "summary": {
+                "daily_total": cost_data.get("daily_total", 0),
+                "weekly_total": cost_data.get("weekly_total", 0),
+                "monthly_total": cost_data.get("monthly_total", 0),
+                "currency": cost_data.get("currency", "USD"),
+                "data_source": cost_data.get("source", "Unknown"),
+                "data_quality": cost_data.get("data_quality", 0),
+                "last_updated": cost_data.get("last_updated", "")
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Cost of living dataset error: {e}")
+        raise HTTPException(status_code=500, detail="Cost of living data fetch failed")
+
+@app.get("/cost-of-living/compare")
+async def compare_cost_of_living(city1: str, city2: str, country1: str = None, country2: str = None):
+    """Compare cost of living between two cities."""
+    try:
+        # Get cost data for both cities
+        cost1_task = cost_of_living_dataset.get_cost_of_living(city1, country1)
+        cost2_task = cost_of_living_dataset.get_cost_of_living(city2, country2)
+        
+        cost1, cost2 = await asyncio.gather(cost1_task, cost2_task)
+        
+        # Calculate differences
+        daily_diff = cost2.get("daily_total", 0) - cost1.get("daily_total", 0)
+        weekly_diff = cost2.get("weekly_total", 0) - cost1.get("weekly_total", 0)
+        monthly_diff = cost2.get("monthly_total", 0) - cost1.get("monthly_total", 0)
+        
+        # Calculate percentage difference
+        if cost1.get("daily_total", 0) > 0:
+            daily_percent = (daily_diff / cost1.get("daily_total", 1)) * 100
+        else:
+            daily_percent = 0
+        
+        return {
+            "success": True,
+            "comparison": {
+                "city1": {
+                    "name": city1,
+                    "country": country1,
+                    "daily_total": cost1.get("daily_total", 0),
+                    "weekly_total": cost1.get("weekly_total", 0),
+                    "monthly_total": cost1.get("monthly_total", 0)
+                },
+                "city2": {
+                    "name": city2,
+                    "country": country2,
+                    "daily_total": cost2.get("daily_total", 0),
+                    "weekly_total": cost2.get("weekly_total", 0),
+                    "monthly_total": cost2.get("monthly_total", 0)
+                },
+                "differences": {
+                    "daily_difference": round(daily_diff, 2),
+                    "weekly_difference": round(weekly_diff, 2),
+                    "monthly_difference": round(monthly_diff, 2),
+                    "daily_percentage": round(daily_percent, 2),
+                    "more_expensive": city2 if daily_diff > 0 else city1
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Cost comparison error: {e}")
+        raise HTTPException(status_code=500, detail="Cost comparison failed")
+
+@app.get("/cost-of-living/cities")
+async def get_available_cities():
+    """Get list of all available cities in the dataset."""
+    try:
+        cities = cost_of_living_dataset.get_city_list()
+        
+        return {
+            "success": True,
+            "total_cities": len(cities),
+            "cities": cities[:100],  # Limit to first 100 for performance
+            "source": "Kaggle Cost of Living Dataset"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting city list: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get city list")
+
+@app.get("/cost-of-living/search")
+async def search_cities(query: str):
+    """Search cities by name or country."""
+    try:
+        if len(query) < 2:
+            raise HTTPException(status_code=400, detail="Query must be at least 2 characters")
+        
+        results = cost_of_living_dataset.search_cities(query)
+        
+        return {
+            "success": True,
+            "query": query,
+            "results": results,
+            "total_found": len(results),
+            "source": "Kaggle Cost of Living Dataset"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error searching cities: {e}")
+        raise HTTPException(status_code=500, detail="Failed to search cities")
+
+@app.get("/cost-of-living/dataset-info")
+async def get_dataset_info():
+    """Get information about the cost of living dataset."""
+    try:
+        total_cities = len(cost_of_living_dataset.cities_data)
+        high_quality_cities = sum(1 for data in cost_of_living_dataset.cities_data.values() 
+                                 if data.get('data_quality', 0) == 1)
+        
+        return {
+            "success": True,
+            "dataset_info": {
+                "total_cities": total_cities,
+                "high_quality_cities": high_quality_cities,
+                "data_quality_percentage": round((high_quality_cities / total_cities * 100), 2) if total_cities > 0 else 0,
+                "source": "Kaggle Cost of Living Dataset",
+                "last_updated": datetime.now().isoformat()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting dataset info: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get dataset info")
+
+# Add new endpoints for budget-based travel planning
+@app.post("/discover-destinations")
+async def discover_destinations(request: dict):
+    """Discover destinations based on budget, dates, and preferences"""
+    try:
+        # Handle both old and new request formats
+        query = request.get("query", "")
+        origin = request.get("origin", "")
+        budget = request.get("budget")
+        dates = request.get("dates", "")
+        travelers = request.get("travelers", "1")
+        destination_type = request.get("type", "")
+        
+        # Legacy format support
+        currency = request.get("currency", "USD")
+        travel_dates = request.get("travel_dates", {})
+        preferences = request.get("preferences", {})
+        trip_type = request.get("trip_type", "leisure")
+        
+        if not budget:
+            raise HTTPException(status_code=400, detail="Budget is required")
+        
+        # Convert budget to USD for calculations
+        budget_usd = await convert_currency(budget, currency, "USD")
+        if isinstance(budget_usd, dict):
+            budget_usd = budget_usd.get("converted_amount", float(budget))
+        else:
+            budget_usd = float(budget_usd)
+        
+        # Parse dates if provided in new format
+        if dates and not travel_dates:
+            if " to " in dates:
+                start_date, end_date = dates.split(" to ")
+                travel_dates = {
+                    "departure_date": start_date,
+                    "return_date": end_date
+                }
+            else:
+                travel_dates = {
+                    "departure_date": dates,
+                    "return_date": dates
+                }
+        
+        # Get potential destinations based on budget
+        destinations = await get_budget_appropriate_destinations(
+            budget_usd, travel_dates, preferences, trip_type, origin, destination_type
+        )
+        
+        return {
+            "destinations": destinations,
+            "budget_usd": budget_usd,
+            "original_budget": budget,
+            "currency": currency,
+            "trip_type": trip_type,
+            "origin": origin,
+            "query": query
+        }
+        
+    except Exception as e:
+        logger.error(f"Error discovering destinations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-itineraries")
+async def generate_itineraries(request: dict):
+    """Generate multiple itinerary options for a destination"""
+    try:
+        destination = request.get("destination")
+        budget = request.get("budget")
+        currency = request.get("currency", "USD")
+        travel_dates = request.get("travel_dates", {})
+        preferences = request.get("preferences", {})
+        trip_type = request.get("trip_type", "leisure")
+        
+        if not all([destination, budget]):
+            raise HTTPException(status_code=400, detail="Destination and budget are required")
+        
+        # Generate multiple itinerary options
+        itineraries = await generate_multiple_itineraries(
+            destination, budget, currency, travel_dates, preferences, trip_type
+        )
+        
+        return {
+            "destination": destination,
+            "itineraries": itineraries,
+            "budget": budget,
+            "currency": currency
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating itineraries: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/customize-itinerary")
+async def customize_itinerary(request: dict):
+    """Allow users to customize their selected itinerary"""
+    try:
+        itinerary_id = request.get("itinerary_id")
+        customizations = request.get("customizations", {})
+        
+        if not itinerary_id:
+            raise HTTPException(status_code=400, detail="Itinerary ID is required")
+        
+        # Apply customizations and recalculate costs
+        customized_itinerary = await apply_itinerary_customizations(
+            itinerary_id, customizations
+        )
+        
+        return {
+            "itinerary": customized_itinerary,
+            "customizations_applied": customizations
+        }
+        
+    except Exception as e:
+        logger.error(f"Error customizing itinerary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/supported-currencies")
+async def get_supported_currencies():
+    """Get list of supported currencies"""
+    return {
+        "currencies": [
+            {"code": "USD", "name": "US Dollar", "symbol": "$"},
+            {"code": "EUR", "name": "Euro", "symbol": "€"},
+            {"code": "GBP", "name": "British Pound", "symbol": "£"},
+            {"code": "INR", "name": "Indian Rupee", "symbol": "₹"},
+            {"code": "CAD", "name": "Canadian Dollar", "symbol": "C$"},
+            {"code": "AUD", "name": "Australian Dollar", "symbol": "A$"},
+            {"code": "JPY", "name": "Japanese Yen", "symbol": "¥"},
+            {"code": "CNY", "name": "Chinese Yuan", "symbol": "¥"},
+            {"code": "BRL", "name": "Brazilian Real", "symbol": "R$"},
+            {"code": "MXN", "name": "Mexican Peso", "symbol": "$"},
+            {"code": "RUB", "name": "Russian Ruble", "symbol": "₽"},
+            {"code": "KRW", "name": "South Korean Won", "symbol": "₩"},
+            {"code": "SGD", "name": "Singapore Dollar", "symbol": "S$"},
+            {"code": "HKD", "name": "Hong Kong Dollar", "symbol": "HK$"},
+            {"code": "NZD", "name": "New Zealand Dollar", "symbol": "NZ$"},
+            {"code": "CHF", "name": "Swiss Franc", "symbol": "CHF"},
+            {"code": "SEK", "name": "Swedish Krona", "symbol": "kr"},
+            {"code": "NOK", "name": "Norwegian Krone", "symbol": "kr"},
+            {"code": "DKK", "name": "Danish Krone", "symbol": "kr"},
+            {"code": "PLN", "name": "Polish Zloty", "symbol": "zł"}
+        ]
+    }
+
+@app.get("/destination-types")
+async def get_destination_types():
+    """Get list of destination types and their characteristics"""
+    return {
+        "destination_types": [
+            {
+                "type": "beach",
+                "name": "Beach Destinations",
+                "description": "Coastal cities with beautiful beaches and water activities",
+                "characteristics": ["beaches", "water sports", "seafood", "sunset views", "island vibes"],
+                "examples": ["Bali", "Maldives", "Thailand", "Caribbean", "Hawaii"]
+            },
+            {
+                "type": "mountain",
+                "name": "Mountain Destinations", 
+                "description": "High-altitude destinations with hiking, skiing, and mountain views",
+                "characteristics": ["hiking", "skiing", "mountain views", "fresh air", "adventure"],
+                "examples": ["Switzerland", "Nepal", "Colorado", "New Zealand", "Alps"]
+            },
+            {
+                "type": "city",
+                "name": "Urban Destinations",
+                "description": "Major cities with cultural attractions, nightlife, and urban experiences",
+                "characteristics": ["museums", "nightlife", "shopping", "restaurants", "culture"],
+                "examples": ["New York", "London", "Tokyo", "Paris", "Dubai"]
+            },
+            {
+                "type": "nature",
+                "name": "Nature Destinations",
+                "description": "Natural landscapes with wildlife, national parks, and outdoor activities",
+                "characteristics": ["wildlife", "national parks", "hiking", "camping", "photography"],
+                "examples": ["Costa Rica", "Kenya", "Iceland", "Canada", "Australia"]
+            },
+            {
+                "type": "cultural",
+                "name": "Cultural Destinations",
+                "description": "Historic cities with rich heritage, monuments, and traditional experiences",
+                "characteristics": ["history", "monuments", "traditional food", "local customs", "architecture"],
+                "examples": ["Rome", "Kyoto", "Cairo", "Machu Picchu", "Prague"]
+            },
+            {
+                "type": "adventure",
+                "name": "Adventure Destinations",
+                "description": "Destinations offering extreme sports and adrenaline activities",
+                "characteristics": ["extreme sports", "adrenaline", "challenges", "outdoor activities"],
+                "examples": ["New Zealand", "Nepal", "Costa Rica", "South Africa", "Chile"]
+            },
+            {
+                "type": "wellness",
+                "name": "Wellness Destinations",
+                "description": "Relaxing destinations focused on health, spa, and mental well-being",
+                "characteristics": ["spas", "yoga", "meditation", "healthy food", "relaxation"],
+                "examples": ["Bali", "Thailand", "India", "Costa Rica", "Greece"]
+            },
+            {
+                "type": "food",
+                "name": "Food Destinations",
+                "description": "Culinary destinations known for their unique cuisine and food culture",
+                "characteristics": ["local cuisine", "food tours", "cooking classes", "markets", "restaurants"],
+                "examples": ["Italy", "Japan", "Thailand", "France", "Mexico"]
+            }
+        ]
+    }
+
+@app.post("/discover-destinations-by-type")
+async def discover_destinations_by_type(request: dict):
+    """Discover destinations based on destination type, budget, and preferences"""
+    try:
+        budget = request.get("budget")
+        currency = request.get("currency", "USD")
+        destination_type = request.get("destination_type", "city")
+        travel_dates = request.get("travel_dates", {})
+        preferences = request.get("preferences", {})
+        trip_type = request.get("trip_type", "leisure")
+        
+        if not budget:
+            raise HTTPException(status_code=400, detail="Budget is required")
+        
+        # Convert budget to USD for calculations
+        budget_usd = await convert_currency(budget, currency, "USD")
+        
+        # Get destinations filtered by type
+        destinations = await get_destinations_by_type(
+            destination_type, budget_usd, travel_dates, preferences, trip_type
+        )
+        
+        return {
+            "destination_type": destination_type,
+            "destinations": destinations,
+            "budget_usd": budget_usd,
+            "original_budget": budget,
+            "currency": currency,
+            "trip_type": trip_type
+        }
+        
+    except Exception as e:
+        logger.error(f"Error discovering destinations by type: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Helper functions for new endpoints
+def estimate_flight_cost(origin: str, destination: str, departure_date: str) -> float:
+    """Estimate flight cost based on distance and season"""
+    # Base flight costs by region (USD)
+    base_costs = {
+        "domestic_us": 300,
+        "north_america": 500,
+        "europe": 800,
+        "asia": 1000,
+        "south_america": 600,
+        "africa": 900,
+        "australia": 1200
+    }
+    
+    # Season multipliers
+    departure_month = int(departure_date.split("-")[1])
+    if departure_month in [12, 1, 2]:  # Winter
+        season_multiplier = 1.2
+    elif departure_month in [6, 7, 8]:  # Summer
+        season_multiplier = 1.3
+    else:  # Spring/Fall
+        season_multiplier = 1.0
+    
+    # Simple region detection
+    if "usa" in destination.lower() or "united states" in destination.lower():
+        region = "domestic_us"
+    elif any(country in destination.lower() for country in ["canada", "mexico"]):
+        region = "north_america"
+    elif any(country in destination.lower() for country in ["france", "germany", "italy", "spain", "uk", "london", "paris"]):
+        region = "europe"
+    elif any(country in destination.lower() for country in ["japan", "china", "thailand", "singapore", "india"]):
+        region = "asia"
+    else:
+        region = "europe"  # Default
+    
+    return base_costs[region] * season_multiplier
+
+def estimate_hotel_cost(destination: str, days: int, travelers: int) -> float:
+    """Estimate hotel cost based on destination and duration"""
+    # Base hotel costs per night (USD)
+    base_costs = {
+        "budget": 60,
+        "mid_range": 120,
+        "luxury": 250
+    }
+    
+    # Destination cost multipliers
+    expensive_destinations = ["tokyo", "london", "paris", "new york", "singapore", "zurich"]
+    budget_destinations = ["bangkok", "mexico city", "prague", "budapest", "krakow"]
+    
+    if any(dest in destination.lower() for dest in expensive_destinations):
+        cost_level = "luxury"
+    elif any(dest in destination.lower() for dest in budget_destinations):
+        cost_level = "budget"
+    else:
+        cost_level = "mid_range"
+    
+    cost_per_night = base_costs[cost_level]
+    rooms_needed = (travelers + 1) // 2  # 2 people per room
+    
+    return cost_per_night * days * rooms_needed
+
+def estimate_airport_transfer_cost(destination: str, travelers: int) -> float:
+    """Estimate airport transfer costs"""
+    # Base transfer costs
+    base_cost = 30  # USD per person
+    return base_cost * travelers
+
+def estimate_travel_insurance_cost(flight_cost: float, days: int) -> float:
+    """Estimate travel insurance cost"""
+    # Typically 4-8% of trip cost
+    return flight_cost * 0.06
+
+def estimate_visa_cost(origin: str, destination: str, travelers: int) -> float:
+    """Estimate visa costs if international travel"""
+    # US citizens don't need visas for many countries
+    visa_required_destinations = ["china", "india", "russia", "brazil"]
+    
+    if any(dest in destination.lower() for dest in visa_required_destinations):
+        return 50 * travelers  # Average visa cost
+    return 0
+
+def get_destination_rating(city: str, country: str) -> float:
+    """Get destination rating based on popularity and quality"""
+    # Popular destinations get higher ratings
+    popular_destinations = {
+        "paris": 4.8, "london": 4.7, "tokyo": 4.9, "new york": 4.6,
+        "barcelona": 4.5, "rome": 4.4, "amsterdam": 4.3, "prague": 4.2,
+        "bangkok": 4.1, "sydney": 4.4, "dubai": 4.3, "singapore": 4.6
+    }
+    
+    city_lower = city.lower()
+    for dest, rating in popular_destinations.items():
+        if dest in city_lower:
+            return rating
+    
+    return 4.0  # Default rating
+
+def get_destination_image(city: str, country: str) -> str:
+    """Get destination image URL"""
+    # In a real app, you'd use a proper image service
+    city_lower = city.lower().replace(" ", "-")
+    return f"https://images.unsplash.com/photo-1506905925346-14b8e4b4c4b0?w=400&h=300&fit=crop&crop=center&q=80"
+
+def get_destination_description(city: str, country: str, dest_type: str) -> str:
+    """Get destination description based on type"""
+    descriptions = {
+        "beach": f"Beautiful {city} offers pristine beaches, crystal-clear waters, and perfect weather for relaxation and water activities.",
+        "mountain": f"Stunning {city} provides breathtaking mountain views, hiking trails, and outdoor adventures in a serene natural setting.",
+        "city": f"Vibrant {city} combines rich history, modern attractions, world-class dining, and exciting nightlife in a bustling urban environment."
+    }
+    return descriptions.get(dest_type, f"Discover the unique charm and attractions of {city}, {country}.")
+
+def get_destination_activities(city: str, country: str, dest_type: str) -> List[str]:
+    """Get destination activities based on type"""
+    activities = {
+        "beach": ["Beach relaxation", "Water sports", "Snorkeling", "Sunset cruises", "Beach volleyball"],
+        "mountain": ["Hiking trails", "Mountain biking", "Scenic drives", "Photography", "Nature walks"],
+        "city": ["City tours", "Museum visits", "Local cuisine", "Shopping", "Nightlife"]
+    }
+    return activities.get(dest_type, ["Local attractions", "Cultural sites", "Dining", "Shopping", "Entertainment"])
+
+async def calculate_comprehensive_trip_cost(origin: str, destination: str, country: str, 
+                                          departure_date: str, return_date: str, 
+                                          travelers: int, budget_usd: float) -> Dict:
+    """Calculate comprehensive trip cost including all components"""
+    try:
+        # Ensure proper types
+        travelers = int(travelers)
+        budget_usd = float(budget_usd)
+        
+        # Calculate trip duration
+        departure = datetime.strptime(departure_date, "%Y-%m-%d")
+        return_dt = datetime.strptime(return_date, "%Y-%m-%d")
+        days = (return_dt - departure).days
+        
+        if days <= 0:
+            days = 1  # Minimum 1 day trip
+        
+        # 1. FLIGHT COSTS (Round Trip)
+        flight_cost_per_person = 0
+        try:
+            flight_data = await get_average_flight_prices(origin, destination, departure_date, return_date)
+            flight_cost_per_person = flight_data["average_price"]
+        except:
+            # Fallback: estimate based on distance and season
+            flight_cost_per_person = estimate_flight_cost(origin, destination, departure_date)
+        
+        total_flight_cost = flight_cost_per_person * travelers
+        
+        # 2. HOTEL COSTS
+        hotel_cost_total = 0
+        try:
+            hotel_data = await get_average_hotel_prices(destination, departure_date, return_date, travelers)
+            hotel_cost_total = hotel_data["total_cost"]
+        except:
+            # Fallback: estimate based on destination
+            hotel_cost_total = estimate_hotel_cost(destination, days, travelers)
+        
+        # 3. DAILY LIVING COSTS (Food, Transport, Activities, Misc)
+        living_costs = await cost_of_living_dataset.get_cost_of_living(destination, country)
+        
+        # Daily meal costs (3 meals per day)
+        daily_meal_cost = (
+            living_costs["daily_food"] * 1.2  # 20% markup for restaurant meals
+        )
+        
+        # Daily transport costs (taxis, public transport, car rental)
+        daily_transport_cost = (
+            living_costs["daily_transport"] * 1.5  # 50% markup for tourist transport
+        )
+        
+        # Daily activity costs (attractions, tours, entertainment)
+        daily_activity_cost = (
+            living_costs["daily_activities"] * 1.3  # 30% markup for tourist activities
+        )
+        
+        # Daily miscellaneous costs (shopping, tips, etc.)
+        daily_misc_cost = (
+            living_costs["daily_misc"] * 1.2  # 20% markup for tourist spending
+        )
+        
+        # Total daily cost per person
+        daily_cost_per_person = (
+            daily_meal_cost + 
+            daily_transport_cost + 
+            daily_activity_cost + 
+            daily_misc_cost
+        )
+        
+        total_daily_costs = daily_cost_per_person * days * travelers
+        
+        # 4. ADDITIONAL COSTS
+        # Airport transfers (to/from airport)
+        airport_transfer_cost = estimate_airport_transfer_cost(destination, travelers)
+        
+        # Travel insurance (optional but recommended)
+        travel_insurance_cost = estimate_travel_insurance_cost(total_flight_cost, days)
+        
+        # Visa costs (if international)
+        visa_cost = estimate_visa_cost(origin, destination, travelers)
+        
+        # Additional costs
+        additional_costs = airport_transfer_cost + travel_insurance_cost + visa_cost
+        
+        # 5. TOTAL TRIP COST
+        total_trip_cost = (
+            total_flight_cost + 
+            hotel_cost_total + 
+            total_daily_costs + 
+            additional_costs
+        )
+        
+        # Cost per person
+        cost_per_person = total_trip_cost / travelers
+        
+        # Budget analysis
+        budget_remaining = budget_usd - total_trip_cost
+        budget_utilization = (total_trip_cost / budget_usd) * 100 if budget_usd > 0 else 0
+        
+        return {
+            "total_cost": total_trip_cost,
+            "cost_per_person": cost_per_person,
+            "budget_remaining": budget_remaining,
+            "budget_utilization": budget_utilization,
+            "fits_budget": total_trip_cost <= budget_usd,
+            "breakdown": {
+                "flights": {
+                    "total": total_flight_cost,
+                    "per_person": flight_cost_per_person
+                },
+                "hotel": {
+                    "total": hotel_cost_total,
+                    "per_night": hotel_cost_total / days if days > 0 else 0
+                },
+                "daily_expenses": {
+                    "total": total_daily_costs,
+                    "per_person_per_day": daily_cost_per_person,
+                    "meals": daily_meal_cost * days * travelers,
+                    "transport": daily_transport_cost * days * travelers,
+                    "activities": daily_activity_cost * days * travelers,
+                    "miscellaneous": daily_misc_cost * days * travelers
+                },
+                "additional": {
+                    "airport_transfers": airport_transfer_cost,
+                    "travel_insurance": travel_insurance_cost,
+                    "visa": visa_cost,
+                    "total": additional_costs
+                }
+            },
+            "trip_duration": days,
+            "travelers": travelers
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating comprehensive trip cost: {e}")
+        return {
+            "total_cost": budget_usd + 1000,  # Over budget to exclude from results
+            "fits_budget": False,
+            "error": str(e)
+        }
+
+def get_destination_type(city: str, country: str) -> str:
+    """Determine destination type based on city and country"""
+    # Simple mapping - in a real app, you'd use a more sophisticated system
+    beach_cities = ["miami", "barcelona", "sydney", "bangkok", "bali", "phuket", "cancun", "malibu", "santamonica"]
+    mountain_cities = ["denver", "zurich", "vancouver", "saltlakecity", "aspen", "whistler", "chamonix", "interlaken"]
+    city_cities = ["newyork", "london", "paris", "tokyo", "singapore", "dubai", "hongkong", "berlin", "amsterdam"]
+    
+    city_lower = city.lower().replace(" ", "")
+    
+    if any(beach in city_lower for beach in beach_cities):
+        return "beach"
+    elif any(mountain in city_lower for mountain in mountain_cities):
+        return "mountain"
+    elif any(city_name in city_lower for city_name in city_cities):
+        return "city"
+    else:
+        return "city"  # Default to city
+
+async def get_budget_appropriate_destinations(budget_usd: float, travel_dates: dict, 
+                                           preferences: dict, trip_type: str, 
+                                           origin: str = "", destination_type: str = "") -> List[Dict]:
+    """Find destinations that fit within the budget using comprehensive cost calculation"""
+    try:
+        # Get available destinations from our dataset
+        available_cities = cost_of_living_dataset.get_city_list()
+        
+        # Parse dates
+        departure_date = travel_dates.get("departure_date", "2024-12-15")
+        return_date = travel_dates.get("return_date", "2024-12-22")
+        travelers = int(preferences.get("travelers", 1))
+        
+        # Filter destinations based on budget
+        suitable_destinations = []
+        
+        # Limit to top 100 cities for performance, but prioritize by type
+        cities_to_check = available_cities[:100]
+        
+        # If destination type specified, prioritize those cities
+        if destination_type:
+            type_cities = [city for city in cities_to_check 
+                          if destination_type.lower() in get_destination_type(city["city"], city["country"]).lower()]
+            cities_to_check = type_cities + [city for city in cities_to_check if city not in type_cities]
+        
+        for city_info in cities_to_check:
+            city = city_info["city"]
+            country = city_info["country"]
+            
+            # Calculate comprehensive trip cost
+            cost_analysis = await calculate_comprehensive_trip_cost(
+                origin, city, country, departure_date, return_date, travelers, budget_usd
+            )
+            
+            # Only include destinations that fit the budget
+            if cost_analysis["fits_budget"]:
+                # Get destination type and rating
+                dest_type = get_destination_type(city, country)
+                rating = get_destination_rating(city, country)
+                
+                suitable_destinations.append({
+                    "id": f"{city.lower().replace(' ', '-')}-{country.lower().replace(' ', '-')}",
+                    "name": city,
+                    "country": country,
+                    "type": dest_type,
+                    "rating": rating,
+                    "image": get_destination_image(city, country),
+                    "description": get_destination_description(city, country, dest_type),
+                    "activities": get_destination_activities(city, country, dest_type),
+                    "total_cost": cost_analysis["total_cost"],
+                    "cost_per_person": cost_analysis["cost_per_person"],
+                    "budget_remaining": cost_analysis["budget_remaining"],
+                    "budget_utilization": cost_analysis["budget_utilization"],
+                    "days": cost_analysis["trip_duration"],
+                    "travelers": travelers,
+                    "cost_breakdown": cost_analysis["breakdown"],
+                    "flight_price": cost_analysis["breakdown"]["flights"]["per_person"],
+                    "hotel_price": cost_analysis["breakdown"]["hotel"]["total"],
+                    "daily_cost": cost_analysis["breakdown"]["daily_expenses"]["per_person_per_day"]
+                })
+        
+        # Sort by budget utilization (most efficient use of budget first)
+        suitable_destinations.sort(key=lambda x: x["budget_utilization"], reverse=True)
+        
+        return suitable_destinations[:10]  # Return top 10 destinations
+        
+    except Exception as e:
+        logger.error(f"Error finding budget-appropriate destinations: {e}")
+        return []
+
+async def generate_multiple_itineraries(destination: str, budget: float, currency: str,
+                                      travel_dates: dict, preferences: dict, trip_type: str) -> List[Dict]:
+    """Generate multiple itinerary options for a destination"""
+    try:
+        # Get cost of living data
+        living_costs = await cost_of_living_dataset.get_cost_of_living(destination)
+        
+        # Generate different itinerary styles
+        itineraries = []
+        
+        # Budget itinerary
+        budget_itinerary = await create_itinerary(
+            destination, budget * 0.7, currency, travel_dates, preferences, "budget"
+        )
+        itineraries.append(budget_itinerary)
+        
+        # Mid-range itinerary
+        midrange_itinerary = await create_itinerary(
+            destination, budget, currency, travel_dates, preferences, "mid-range"
+        )
+        itineraries.append(midrange_itinerary)
+        
+        # Luxury itinerary
+        luxury_itinerary = await create_itinerary(
+            destination, budget * 1.3, currency, travel_dates, preferences, "luxury"
+        )
+        itineraries.append(luxury_itinerary)
+        
+        return itineraries
+        
+    except Exception as e:
+        logger.error(f"Error generating itineraries: {e}")
+        return []
+
+async def create_itinerary(destination: str, budget: float, currency: str,
+                         travel_dates: dict, preferences: dict, style: str) -> Dict:
+    """Create a detailed itinerary for a destination"""
+    try:
+        # Calculate trip duration
+        days = 7  # Default
+        if travel_dates.get("duration"):
+            days = int(travel_dates["duration"])
+        
+        # Get cost breakdown
+        cost_breakdown = await calculate_total_trip_cost(
+            "Origin", destination, 
+            travel_dates.get("start_date", "2024-12-01"),
+            travel_dates.get("end_date", "2024-12-08"),
+            1, preferences
+        )
+        
+        # Generate AI-powered itinerary
+        itinerary_prompt = f"""
+        Create a {style} {days}-day itinerary for {destination} with a budget of {budget} {currency}.
+        
+        Budget breakdown:
+        - Flight: {cost_breakdown.get('breakdown', {}).get('flight_cost_per_person', 0)} {currency}
+        - Accommodation: {cost_breakdown.get('breakdown', {}).get('hotel_cost_per_person', 0)} {currency}
+        - Daily expenses: {cost_breakdown.get('breakdown', {}).get('living_cost_per_person', 0)} {currency}
+        
+        Preferences: {preferences}
+        
+        Provide:
+        1. Day-by-day activities
+        2. Restaurant recommendations
+        3. Transportation options
+        4. Must-see attractions
+        5. Budget tips
+        6. Booking recommendations
+        """
+        
+        # Use Groq to generate itinerary
+        response = await call_groq_chat(itinerary_prompt)
+        
+        return {
+            "style": style,
+            "days": days,
+            "budget": budget,
+            "currency": currency,
+            "cost_breakdown": cost_breakdown,
+            "itinerary": response,
+            "booking_links": await get_booking_links(destination, travel_dates)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating itinerary: {e}")
+        return {}
+
+async def apply_itinerary_customizations(itinerary_id: str, customizations: dict) -> Dict:
+    """Apply user customizations to an itinerary"""
+    try:
+        # This would integrate with a database to store and retrieve itineraries
+        # For now, return a mock response
+        return {
+            "itinerary_id": itinerary_id,
+            "customizations": customizations,
+            "status": "customized",
+            "message": "Customizations applied successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error applying customizations: {e}")
+        return {}
+
+async def get_booking_links(destination: str, travel_dates: dict) -> Dict:
+    """Get booking links for flights, hotels, and activities"""
+    try:
+        return {
+            "flights": f"https://www.skyscanner.com/flights/to/{destination}",
+            "hotels": f"https://www.booking.com/searchresults.html?ss={destination}",
+            "activities": f"https://www.getyourguide.com/{destination.lower()}/",
+            "car_rental": f"https://www.rentalcars.com/en/city/{destination.lower()}/"
+        }
+    except Exception as e:
+        logger.error(f"Error getting booking links: {e}")
+        return {}
+
+async def get_destinations_by_type(destination_type: str, budget_usd: float, 
+                                 travel_dates: dict, preferences: dict, trip_type: str) -> List[Dict]:
+    """Find destinations filtered by type that fit within the budget"""
+    try:
+        # Define destination type mappings
+        destination_mappings = {
+            "beach": {
+                "cities": ["Bali", "Phuket", "Maldives", "Hawaii", "Cancun", "Barcelona", "Sydney", "Dubai", "Miami", "Santos"],
+                "countries": ["Thailand", "Indonesia", "Maldives", "Spain", "Australia", "Mexico", "Brazil", "Greece", "Italy", "Portugal"]
+            },
+            "mountain": {
+                "cities": ["Zurich", "Geneva", "Kathmandu", "Denver", "Queenstown", "Innsbruck", "Chamonix", "Banff", "Aspen", "Whistler"],
+                "countries": ["Switzerland", "Nepal", "Austria", "Canada", "New Zealand", "Chile", "Argentina", "Norway", "Iceland", "Japan"]
+            },
+            "city": {
+                "cities": ["New York", "London", "Tokyo", "Paris", "Dubai", "Singapore", "Hong Kong", "Bangkok", "Istanbul", "Mumbai"],
+                "countries": ["USA", "UK", "Japan", "France", "UAE", "Singapore", "Hong Kong", "Thailand", "Turkey", "India"]
+            },
+            "nature": {
+                "cities": ["Costa Rica", "Nairobi", "Reykjavik", "Vancouver", "Cairns", "Cape Town", "Yellowstone", "Banff", "Patagonia", "Galapagos"],
+                "countries": ["Costa Rica", "Kenya", "Iceland", "Canada", "Australia", "South Africa", "USA", "Chile", "Ecuador", "Brazil"]
+            },
+            "cultural": {
+                "cities": ["Rome", "Kyoto", "Cairo", "Prague", "Athens", "Istanbul", "Delhi", "Beijing", "Marrakech", "Cusco"],
+                "countries": ["Italy", "Japan", "Egypt", "Czech Republic", "Greece", "Turkey", "India", "China", "Morocco", "Peru"]
+            },
+            "adventure": {
+                "cities": ["Queenstown", "Kathmandu", "Costa Rica", "Cape Town", "Santiago", "Reykjavik", "Banff", "Chamonix", "Interlaken", "Moab"],
+                "countries": ["New Zealand", "Nepal", "Costa Rica", "South Africa", "Chile", "Iceland", "Canada", "Switzerland", "USA", "Norway"]
+            },
+            "wellness": {
+                "cities": ["Bali", "Thailand", "Rishikesh", "Costa Rica", "Santorini", "Tulum", "Sedona", "Ubud", "Koh Samui", "Goa"],
+                "countries": ["Indonesia", "Thailand", "India", "Costa Rica", "Greece", "Mexico", "USA", "Bali", "Thailand", "India"]
+            },
+            "food": {
+                "cities": ["Rome", "Tokyo", "Bangkok", "Paris", "Mexico City", "Barcelona", "Istanbul", "Lima", "Seoul", "Bologna"],
+                "countries": ["Italy", "Japan", "Thailand", "France", "Mexico", "Spain", "Turkey", "Peru", "South Korea", "Italy"]
+            }
+        }
+        
+        # Get available destinations from our dataset
+        available_cities = cost_of_living_dataset.get_city_list()
+        
+        # Filter destinations based on type and budget
+        suitable_destinations = []
+        
+        # Get type-specific cities and countries
+        type_mapping = destination_mappings.get(destination_type, destination_mappings["city"])
+        type_cities = type_mapping["cities"]
+        type_countries = type_mapping["countries"]
+        
+        for city_info in available_cities:
+            city = city_info["city"]
+            country = city_info["country"]
+            
+            # Check if city or country matches the destination type
+            if (city in type_cities or country in type_countries):
+                # Get cost of living for this city
+                living_costs = await cost_of_living_dataset.get_cost_of_living(city, country)
+                
+                # Calculate if this destination fits the budget
+                daily_cost = (
+                    living_costs["daily_food"] + 
+                    living_costs["daily_transport"] + 
+                    living_costs["daily_activities"] + 
+                    living_costs["daily_misc"]
+                )
+                
+                # Estimate flight costs (simplified)
+                estimated_flight_cost = 800  # Base flight cost
+                
+                # Calculate total estimated cost
+                days = 7  # Default 7-day trip
+                total_estimated_cost = estimated_flight_cost + (daily_cost * days)
+                
+                if total_estimated_cost <= budget_usd:
+                    # Get weather info for the destination
+                    weather_info = await get_weather_info(city)
+                    
+                    suitable_destinations.append({
+                        "city": city,
+                        "country": country,
+                        "estimated_daily_cost": round(daily_cost, 2),
+                        "estimated_total_cost": round(total_estimated_cost, 2),
+                        "budget_remaining": round(budget_usd - total_estimated_cost, 2),
+                        "cost_level": "budget" if daily_cost < 50 else "mid-range" if daily_cost < 100 else "luxury",
+                        "destination_type": destination_type,
+                        "weather": weather_info,
+                        "highlights": get_destination_highlights(city, country, destination_type)
+                    })
+        
+        # Sort by budget remaining (descending)
+        suitable_destinations.sort(key=lambda x: x["budget_remaining"], reverse=True)
+        
+        return suitable_destinations[:10]  # Return top 10 options
+        
+    except Exception as e:
+        logger.error(f"Error getting destinations by type: {e}")
+        return []
+
+def get_destination_highlights(city: str, country: str, destination_type: str) -> List[str]:
+    """Get destination highlights based on type"""
+    highlights_mapping = {
+        "beach": [
+            "Beautiful beaches", "Water sports", "Seafood restaurants", "Sunset views", "Island hopping"
+        ],
+        "mountain": [
+            "Mountain views", "Hiking trails", "Skiing", "Fresh air", "Adventure sports"
+        ],
+        "city": [
+            "Museums", "Nightlife", "Shopping", "Restaurants", "Cultural attractions"
+        ],
+        "nature": [
+            "Wildlife", "National parks", "Hiking", "Photography", "Outdoor activities"
+        ],
+        "cultural": [
+            "Historic sites", "Monuments", "Traditional food", "Local customs", "Architecture"
+        ],
+        "adventure": [
+            "Extreme sports", "Adrenaline activities", "Challenges", "Outdoor adventures", "Thrilling experiences"
+        ],
+        "wellness": [
+            "Spas", "Yoga", "Meditation", "Healthy food", "Relaxation"
+        ],
+        "food": [
+            "Local cuisine", "Food tours", "Cooking classes", "Markets", "Restaurants"
+        ]
+    }
+    
+    return highlights_mapping.get(destination_type, highlights_mapping["city"])
+
+async def get_weather_info(city: str) -> Dict:
+    """Get weather information for a destination"""
+    try:
+        # This would integrate with your weather API
+        # For now, return mock data
+        return {
+            "temperature": "22°C",
+            "condition": "Sunny",
+            "humidity": "65%",
+            "best_time": "Year-round"
+        }
+    except Exception as e:
+        logger.error(f"Error getting weather info: {e}")
+        return {}
 
 if __name__ == "__main__":
     import uvicorn

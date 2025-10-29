@@ -12,7 +12,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 # API Keys
-CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY", "")
+CURRENCY_API_KEY = os.getenv("CURRENCY_API_KEY", "73d572ecd73a67804d4f4005")
 
 class CurrencyAPI:
     """Currency conversion using ExchangeRate-API"""

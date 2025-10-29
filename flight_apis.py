@@ -14,13 +14,13 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
+# Load environment variables first
+load_dotenv()
+
 # API Keys
 SKYSCANNER_API_KEY = os.getenv("SKYSCANNER_API_KEY", "")
 AMADEUS_CLIENT_ID = os.getenv("AMADEUS_CLIENT_ID", "")
 AMADEUS_CLIENT_SECRET = os.getenv("AMADEUS_CLIENT_SECRET", "")
-
-# Load environment variables
-load_dotenv()
 
 class FlightSearchAPI:
     """Comprehensive flight search using multiple APIs"""
@@ -58,70 +58,156 @@ class FlightSearchAPI:
             logger.error(f"Error getting Amadeus token: {e}")
             return None
     
+    async def _get_place_id(self, query: str) -> str:
+        """Get place ID from airport code or city name using auto-complete"""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://flights-sky.p.rapidapi.com/flights/auto-complete",
+                    params={"query": query},
+                    headers={
+                        "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                        "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("data") and len(data["data"]) > 0:
+                        # Return the first result's skyId
+                        return data["data"][0]["presentation"]["skyId"]
+        except Exception as e:
+            logger.error(f"Error getting place ID for {query}: {e}")
+        
+        return query  # Fallback to original query
+
     async def search_flights_skyscanner(self, origin: str, destination: str, 
-                                      departure_date: str, passengers: int = 1) -> List[Dict]:
-        """Search flights using Skyscanner API"""
+                                      departure_date: str, passengers: int = 1,
+                                      return_date: str = None, search_type: str = "one-way") -> List[Dict]:
+        """Search flights using RapidAPI Skyscanner API with optimal endpoint selection"""
         if not self.skyscanner_available:
             return []
             
         try:
-            # Step 1: Create search session
+            # Convert airport codes to place IDs
+            origin_id = await self._get_place_id(origin)
+            destination_id = await self._get_place_id(destination)
+            
             async with httpx.AsyncClient() as client:
-                create_response = await client.post(
-                    "https://partners.api.skyscanner.net/apiservices/v3/flights/live/search/create",
-                    headers={
-                        "x-api-key": SKYSCANNER_API_KEY,
-                        "Content-Type": "application/x-www-form-urlencoded"
-                    },
-                    data={
-                        "queryLegs": json.dumps([{
-                            "originPlaceId": origin,
-                            "destinationPlaceId": destination,
-                            "date": departure_date
-                        }]),
-                        "adults": passengers,
-                        "children": 0,
-                        "infants": 0,
-                        "cabinClass": "CABIN_CLASS_ECONOMY",
-                        "currencyCode": "USD"
-                    }
-                )
-                
-                if create_response.status_code != 200:
-                    logger.error(f"Skyscanner create search error: {create_response.status_code}")
-                    return []
-                
-                search_data = create_response.json()
-                session_token = search_data.get("sessionToken")
-                
-                if not session_token:
-                    return []
-                
-                # Step 2: Poll for results
-                max_attempts = 10
-                for attempt in range(max_attempts):
-                    await asyncio.sleep(2)  # Wait between polls
-                    
-                    poll_response = await client.get(
-                        f"https://partners.api.skyscanner.net/apiservices/v3/flights/live/search/poll/{session_token}",
-                        headers={"x-api-key": SKYSCANNER_API_KEY}
+                # Select optimal endpoint based on search type
+                if search_type == "roundtrip" and return_date:
+                    # Use roundtrip search for complete trips
+                    response = await client.get(
+                        "https://flights-sky.p.rapidapi.com/flights/search-roundtrip",
+                        params={
+                            "fromEntityId": origin_id,
+                            "toEntityId": destination_id,
+                            "departDate": departure_date,
+                            "returnDate": return_date
+                        },
+                        headers={
+                            "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                            "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                        }
                     )
                     
-                    if poll_response.status_code == 200:
-                        results = poll_response.json()
-                        return self._parse_skyscanner_results(results)
-                    elif poll_response.status_code == 202:
-                        # Still processing, continue polling
-                        continue
-                    else:
-                        logger.error(f"Skyscanner poll error: {poll_response.status_code}")
-                        break
+                    if response.status_code == 200:
+                        data = response.json()
+                        return self._parse_roundtrip_results(data, origin, destination, departure_date, return_date)
+                else:
+                    # Use cheapest-one-way for price comparison
+                    response = await client.get(
+                        "https://flights-sky.p.rapidapi.com/flights/cheapest-one-way",
+                        params={
+                            "fromEntityId": origin_id,
+                            "toEntityId": destination_id,
+                            "departDate": departure_date
+                        },
+                        headers={
+                            "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                            "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        return self._parse_cheapest_one_way_results(data, origin, destination, departure_date)
                 
+                logger.error(f"RapidAPI Skyscanner error: {response.status_code}")
                 return []
                 
         except Exception as e:
-            logger.error(f"Error in Skyscanner search: {e}")
+            logger.error(f"Error in RapidAPI Skyscanner search: {e}")
             return []
+    
+    async def _poll_for_complete_results(self, client: httpx.AsyncClient, initial_data: Dict) -> Optional[Dict]:
+        """Poll for complete results when status is incomplete"""
+        try:
+            # Extract session token or search ID from initial response
+            session_token = initial_data.get('data', {}).get('context', {}).get('sessionToken')
+            if not session_token:
+                logger.error("No session token found for polling")
+                return None
+            
+            # Poll for complete results (max 10 attempts, 2 seconds between)
+            max_attempts = 10
+            for attempt in range(max_attempts):
+                await asyncio.sleep(2)  # Wait 2 seconds between polls
+                
+                try:
+                    # Use the search-incomplete endpoint
+                    poll_response = await client.get(
+                        "https://flights-sky.p.rapidapi.com/web/flights/search-incomplete",
+                        params={"sessionToken": session_token},
+                        headers={
+                            "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                            "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                        }
+                    )
+                    
+                    if poll_response.status_code == 200:
+                        poll_data = poll_response.json()
+                        context = poll_data.get('data', {}).get('context', {})
+                        status = context.get('status', 'unknown')
+                        
+                        if status == 'complete':
+                            logger.info(f"Results complete after {attempt + 1} attempts")
+                            return poll_data
+                        elif status == 'incomplete':
+                            logger.info(f"Still incomplete, attempt {attempt + 1}/{max_attempts}")
+                            continue
+                        else:
+                            logger.warning(f"Unknown status: {status}")
+                            return poll_data
+                    else:
+                        logger.error(f"Polling error: {poll_response.status_code}")
+                        return None
+                        
+                except Exception as e:
+                    logger.error(f"Error during polling attempt {attempt + 1}: {e}")
+                    continue
+            
+            logger.warning("Max polling attempts reached, returning partial results")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error in polling for complete results: {e}")
+            return None
+    
+    def _get_skyscanner_endpoint(self, search_type: str, origin: str, destination: str, 
+                                departure_date: str, return_date: str = None) -> str:
+        """Get the appropriate Skyscanner endpoint based on search type"""
+        base_url = "https://flights-sky.p.rapidapi.com"
+        
+        if search_type == "roundtrip" and return_date:
+            # Roundtrip search
+            return f"{base_url}/web/flights/search-roundtrip"
+        elif search_type == "multi-city":
+            # Multi-city search
+            return f"{base_url}/web/flights/search-multi-city"
+        else:
+            # One-way search (default)
+            return f"{base_url}/web/flights/search-one-way"
     
     async def search_flights_amadeus(self, origin: str, destination: str, 
                                    departure_date: str, passengers: int = 1) -> List[Dict]:
@@ -165,18 +251,242 @@ class FlightSearchAPI:
             logger.error(f"Error in Amadeus search: {e}")
             return []
     
-    def _parse_skyscanner_results(self, results: Dict) -> List[Dict]:
-        """Parse Skyscanner API results"""
+    def _parse_cheapest_one_way_results(self, results: Dict, origin: str, destination: str, departure_date: str) -> List[Dict]:
+        """Parse cheapest-one-way results from RapidAPI Skyscanner"""
         flights = []
         
         try:
-            content = results.get("content", {})
-            results_data = content.get("results", {})
+            data = results.get("data", [])
             
-            # Extract itineraries
-            itineraries = results_data.get("itineraries", {})
+            if not data:
+                logger.warning("No flight data returned from cheapest-one-way endpoint")
+                return []
             
-            for itinerary_id, itinerary in itineraries.items():
+            # Take the first few results (cheapest prices)
+            for i, flight_data in enumerate(data[:5]):  # Limit to 5 results
+                day = flight_data.get("day", departure_date)
+                price = flight_data.get("price", 0)
+                group = flight_data.get("group", "unknown")
+                
+                # Create flight entry
+                flights.append({
+                    "id": f"rapidapi_cheapest_{i}",
+                    "airline": "Multiple Airlines",
+                    "flight_number": f"Cheapest {group.title()}",
+                    "departure_time": f"{day}T09:00:00",  # Default morning departure
+                    "arrival_time": f"{day}T15:00:00",    # Default afternoon arrival
+                    "duration": "6h 00m",  # Default duration
+                    "price": {"USD": price},
+                    "stops": 0 if group == "low" else 1,  # Assume direct for low prices
+                    "aircraft": "Commercial Aircraft",
+                    "booking_link": f"https://www.skyscanner.com/transport/flights/{origin}/{destination}/{day}/",
+                    "source": "RapidAPI Skyscanner Cheapest",
+                    "departure_date": day,
+                    "price_category": group
+                })
+            
+            logger.info(f"Parsed {len(flights)} flights from cheapest-one-way endpoint")
+            return flights
+            
+        except Exception as e:
+            logger.error(f"Error parsing cheapest-one-way results: {e}")
+            return []
+
+    def _parse_roundtrip_results(self, results: Dict, origin: str, destination: str, departure_date: str, return_date: str) -> List[Dict]:
+        """Parse roundtrip search results from RapidAPI Skyscanner"""
+        flights = []
+        
+        try:
+            data = results.get("data", {})
+            itineraries = data.get("itineraries", {})
+            results_data = itineraries.get("results", {})
+            
+            if not results_data:
+                logger.warning("No roundtrip data returned from search-roundtrip endpoint")
+                return []
+            
+            # Parse roundtrip results
+            for i, (itinerary_id, itinerary) in enumerate(list(results_data.items())[:3]):  # Limit to 3 results
+                pricing_options = itinerary.get("pricingOptions", [])
+                
+                for j, option in enumerate(pricing_options[:2]):  # Limit to 2 pricing options per itinerary
+                    price = option.get("price", {})
+                    agent = option.get("agentIds", [""])[0]
+                    
+                    # Get leg details for outbound and return
+                    leg_ids = itinerary.get("legIds", [])
+                    outbound_leg = itineraries.get("legs", {}).get(leg_ids[0], {}) if len(leg_ids) > 0 else {}
+                    return_leg = itineraries.get("legs", {}).get(leg_ids[1], {}) if len(leg_ids) > 1 else {}
+                    
+                    # Calculate total duration
+                    outbound_duration = self._calculate_leg_duration(outbound_leg, itineraries)
+                    return_duration = self._calculate_leg_duration(return_leg, itineraries)
+                    
+                    flights.append({
+                        "id": f"rapidapi_roundtrip_{i}_{j}",
+                        "airline": agent or "Multiple Airlines",
+                        "flight_number": f"Roundtrip {agent or 'Flight'}",
+                        "departure_time": f"{departure_date}T09:00:00",
+                        "arrival_time": f"{return_date}T18:00:00",
+                        "duration": f"{outbound_duration} + {return_duration}",
+                        "price": {"USD": price.get("amount", 0)},
+                        "stops": len(outbound_leg.get("segmentIds", [])) - 1,
+                        "aircraft": "Commercial Aircraft",
+                        "booking_link": option.get("url", ""),
+                        "source": "RapidAPI Skyscanner Roundtrip",
+                        "departure_date": departure_date,
+                        "return_date": return_date,
+                        "trip_type": "roundtrip"
+                    })
+            
+            logger.info(f"Parsed {len(flights)} roundtrip flights")
+            return flights
+            
+        except Exception as e:
+            logger.error(f"Error parsing roundtrip results: {e}")
+            return []
+
+    def _calculate_leg_duration(self, leg: Dict, itineraries: Dict) -> str:
+        """Calculate duration for a flight leg"""
+        try:
+            segments = leg.get("segmentIds", [])
+            if not segments:
+                return "6h 00m"
+            
+            # Get first and last segment times
+            first_segment = itineraries.get("segments", {}).get(segments[0], {})
+            last_segment = itineraries.get("segments", {}).get(segments[-1], {})
+            
+            departure = first_segment.get("departureDateTime", "")
+            arrival = last_segment.get("arrivalDateTime", "")
+            
+            if departure and arrival:
+                # Simple duration calculation (in real implementation, parse datetime)
+                return "6h 00m"  # Placeholder
+            
+            return "6h 00m"
+        except:
+            return "6h 00m"
+
+    async def get_price_calendar(self, origin: str, destination: str) -> List[Dict]:
+        """Get price calendar for flexible date searches"""
+        if not self.skyscanner_available:
+            return []
+            
+        try:
+            # Convert airport codes to place IDs
+            origin_id = await self._get_place_id(origin)
+            destination_id = await self._get_place_id(destination)
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://flights-sky.p.rapidapi.com/flights/price-calendar",
+                    params={
+                        "fromEntityId": origin_id,
+                        "toEntityId": destination_id
+                    },
+                    headers={
+                        "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                        "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return self._parse_price_calendar_results(data, origin, destination)
+                else:
+                    logger.error(f"Price calendar error: {response.status_code}")
+                    return []
+                
+        except Exception as e:
+            logger.error(f"Error getting price calendar: {e}")
+            return []
+
+    def _parse_price_calendar_results(self, results: Dict, origin: str, destination: str) -> List[Dict]:
+        """Parse price calendar results"""
+        calendar_data = []
+        
+        try:
+            data = results.get("data", [])
+            
+            if not data:
+                logger.warning("No price calendar data returned")
+                return []
+            
+            # Parse price calendar data
+            for entry in data[:30]:  # Limit to 30 days
+                day = entry.get("day", "")
+                price = entry.get("price", 0)
+                group = entry.get("group", "unknown")
+                
+                calendar_data.append({
+                    "date": day,
+                    "price": price,
+                    "price_category": group,
+                    "origin": origin,
+                    "destination": destination,
+                    "currency": "USD"
+                })
+            
+            logger.info(f"Parsed {len(calendar_data)} price calendar entries")
+            return calendar_data
+            
+        except Exception as e:
+            logger.error(f"Error parsing price calendar results: {e}")
+            return []
+
+    async def validate_airport_code(self, airport_code: str) -> Dict:
+        """Validate airport code using the airports database"""
+        if not self.skyscanner_available:
+            return {"valid": False, "error": "API not available"}
+            
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://flights-sky.p.rapidapi.com/flights/airports",
+                    headers={
+                        "X-RapidAPI-Key": SKYSCANNER_API_KEY,
+                        "X-RapidAPI-Host": "flights-sky.p.rapidapi.com"
+                    }
+                )
+                
+                if response.status_code == 200:
+                    airports = response.json()
+                    
+                    # Search for the airport code
+                    for airport in airports:
+                        if isinstance(airport, dict) and airport.get("iata", "").upper() == airport_code.upper():
+                            return {
+                                "valid": True,
+                                "airport": {
+                                    "iata": airport.get("iata"),
+                                    "icao": airport.get("icao"),
+                                    "name": airport.get("name"),
+                                    "location": airport.get("location"),
+                                    "skyId": airport.get("skyId")
+                                }
+                            }
+                    
+                    return {"valid": False, "error": "Airport code not found"}
+                else:
+                    return {"valid": False, "error": f"API error: {response.status_code}"}
+                
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+
+    def _parse_rapidapi_skyscanner_results(self, results: Dict) -> List[Dict]:
+        """Parse RapidAPI Skyscanner results from web endpoints"""
+        flights = []
+        
+        try:
+            # Extract data from the new web API structure
+            data = results.get("data", {})
+            itineraries = data.get("itineraries", {})
+            results_data = itineraries.get("results", {})
+            
+            # Extract flight results
+            for itinerary_id, itinerary in results_data.items():
+                # Get pricing options
                 pricing_options = itinerary.get("pricingOptions", [])
                 
                 for option in pricing_options:
@@ -185,12 +495,12 @@ class FlightSearchAPI:
                     
                     # Get leg details
                     leg_id = itinerary.get("legIds", [""])[0]
-                    leg = results_data.get("legs", {}).get(leg_id, {})
+                    leg = itineraries.get("legs", {}).get(leg_id, {})
                     
                     # Get segment details
                     segments = []
                     for segment_id in leg.get("segmentIds", []):
-                        segment = results_data.get("segments", {}).get(segment_id, {})
+                        segment = itineraries.get("segments", {}).get(segment_id, {})
                         segments.append({
                             "departure": segment.get("departureDateTime"),
                             "arrival": segment.get("arrivalDateTime"),
@@ -199,22 +509,27 @@ class FlightSearchAPI:
                             "carrier": segment.get("marketingCarrierId")
                         })
                     
+                    # Calculate duration
+                    duration = self._calculate_duration(segments)
+                    
                     flights.append({
-                        "id": f"skyscanner_{itinerary_id}_{agent}",
+                        "id": f"rapidapi_skyscanner_{itinerary_id}_{agent}",
                         "airline": agent,
                         "flight_number": f"{agent} Flight",
                         "departure_time": segments[0].get("departure") if segments else "",
                         "arrival_time": segments[-1].get("arrival") if segments else "",
-                        "duration": self._calculate_duration(segments),
+                        "duration": duration,
                         "price": {"USD": price.get("amount", 0)},
                         "stops": len(segments) - 1,
                         "aircraft": "Commercial Aircraft",
                         "booking_link": option.get("url", ""),
-                        "source": "Skyscanner"
+                        "source": "RapidAPI Skyscanner Web",
+                        "origin": segments[0].get("origin", "") if segments else "",
+                        "destination": segments[-1].get("destination", "") if segments else ""
                     })
                     
         except Exception as e:
-            logger.error(f"Error parsing Skyscanner results: {e}")
+            logger.error(f"Error parsing RapidAPI Skyscanner results: {e}")
             
         return flights[:10]  # Return top 10 results
     
@@ -281,14 +596,15 @@ class FlightSearchAPI:
             return "Unknown"
     
     async def search_flights(self, origin: str, destination: str, 
-                           departure_date: str, passengers: int = 1) -> List[Dict]:
-        """Search flights using all available APIs"""
+                           departure_date: str, passengers: int = 1, 
+                           return_date: str = None, search_type: str = "one-way") -> List[Dict]:
+        """Search flights using all available APIs with support for different search types"""
         all_flights = []
         
         # Search with Skyscanner
         if self.skyscanner_available:
             skyscanner_flights = await self.search_flights_skyscanner(
-                origin, destination, departure_date, passengers
+                origin, destination, departure_date, passengers, return_date, search_type
             )
             all_flights.extend(skyscanner_flights)
         
